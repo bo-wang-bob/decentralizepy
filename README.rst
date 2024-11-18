@@ -49,7 +49,7 @@ Setting up decentralizepy
 Running the code
 ----------------
 * To run ``EL-local`` on windows. (powershell)::
-    cd .\\tutorial\\EpidemicLearning\
+    cd .\\tutorial\\EpidemicLearning
     powershell -ExecutionPolicy Bypass -File .\\run_el-local.ps1
 
 
