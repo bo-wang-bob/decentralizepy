@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
     l = Linear(n_machines, procs_per_machine)
     m_id = args.machine_id
-
+    print("###############Machine ID: ", m_id)
     processes = []
     for r in range(procs_per_machine):
         processes.append(

@@ -35,7 +35,7 @@ Setting up decentralizepy
 
     pip3 install --editable .\[dev\]
     
-* Install decentralizepy for development. (bash) ::
+* Install decentralizepy for development. (bash/powershell) ::
 
     pip3 install --editable .[dev]
 
@@ -48,6 +48,10 @@ Setting up decentralizepy
 ----------------
 Running the code
 ----------------
+* To run ``EL-local`` on windows. (powershell)::
+    cd .\\tutorial\\EpidemicLearning\
+    powershell -ExecutionPolicy Bypass -File .\\run_el-local.ps1
+
 
 * Follow the tutorial in ``tutorial/``. OR,
 * Generate a new graph file with the required topology using ``generate_graph.py``. ::

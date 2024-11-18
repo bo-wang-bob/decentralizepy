@@ -99,7 +99,9 @@ class EL_Local(Node):
             self.iteration = iteration
             self.trainer.train(self.dataset)
 
-            neighbors_this_round = self.get_neighbors()
+            neighbors_this_round = (
+                self.get_neighbors()
+            )  # Randomly select self.degree neighbors to communicate with
 
             to_send = self.sharing.get_data_to_send()
             to_send["CHANNEL"] = "DPSGD"
@@ -480,6 +482,9 @@ class EL_Local(Node):
         )
 
         logging.info(
-            "Each proc uses %d threads out of %d.", self.threads_per_proc, total_threads
+            "Machine ID %d, Each proc uses %d threads out of %d.",
+            self.machine_id,
+            self.threads_per_proc,
+            total_threads,
         )
         self.run()
