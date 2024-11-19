@@ -51,27 +51,52 @@ if __name__ == "__main__":
     l = Linear(n_machines, procs_per_machine)
     m_id = args.machine_id
     print("###############Machine ID: ", m_id)
+    malicous_nodes = list(range(args.malicious_nodes))
+
     processes = []
     for r in range(procs_per_machine):
-        processes.append(
-            mp.Process(
-                target=EL_Local,
-                args=[
-                    r,
-                    m_id,
-                    l,
-                    g,
-                    my_config,
-                    args.iterations,
-                    args.log_dir,
-                    args.weights_store_dir,
-                    log_level[args.log_level],
-                    args.test_after,
-                    args.train_evaluate_after,
-                    args.reset_optimizer,
-                ],
+        if r in malicous_nodes:
+            processes.append(
+                mp.Process(
+                    target=EL_Local,
+                    args=[
+                        r,
+                        m_id,
+                        l,
+                        g,
+                        my_config,
+                        args.iterations,
+                        args.log_dir,
+                        args.weights_store_dir,
+                        log_level[args.log_level],
+                        args.test_after,
+                        args.train_evaluate_after,
+                        args.reset_optimizer,
+                        True,
+                    ],
+                )
             )
-        )
+        else:
+            processes.append(
+                mp.Process(
+                    target=EL_Local,
+                    args=[
+                        r,
+                        m_id,
+                        l,
+                        g,
+                        my_config,
+                        args.iterations,
+                        args.log_dir,
+                        args.weights_store_dir,
+                        log_level[args.log_level],
+                        args.test_after,
+                        args.train_evaluate_after,
+                        args.reset_optimizer,
+                        False,
+                    ],
+                )
+            )
 
     for p in processes:
         p.start()

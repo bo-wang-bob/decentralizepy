@@ -7,7 +7,7 @@ import torchvision.transforms as transforms
 from torch import nn
 from torch.utils.data import DataLoader
 import pickle
-
+import numpy as np
 
 from decentralizepy.datasets.Dataset import Dataset
 from decentralizepy.datasets.Partitioner import (
@@ -20,6 +20,23 @@ from decentralizepy.mappings.Mapping import Mapping
 from decentralizepy.models.Model import Model
 
 NUM_CLASSES = 10
+
+
+class Customize_Dataset(Dataset):
+    def __init__(self, X, Y, transform):
+        self.train_data = X
+        self.targets = Y
+        self.transform = transform
+
+    def __getitem__(self, index):
+        data = self.train_data[index]
+        target = self.targets[index]
+        data = self.transform(data)
+
+        return data, target
+
+    def __len__(self):
+        return len(self.train_data)
 
 
 class CIFAR10(Dataset):
@@ -112,13 +129,67 @@ class CIFAR10(Dataset):
                 torch.Generator().manual_seed(self.random_seed),
             )
 
-    def load_poisioned_trainset(self):
+    def load_poisoned_trainset(self):
         """
         Load the poisoned training set
         """
         logging.info("Loading poisoned training set.")
-        with open(self.poisoned_train, "rb") as train_f:
+        with open(self.poisoned_trainset_dir, "rb") as train_f:
             saved_southwest_dataset_train = pickle.load(train_f)
+
+        logging.info(
+            "shape of edge case train data (southwest airplane dataset train)",
+            saved_southwest_dataset_train.shape,
+        )
+
+        sampled_targets_array_train = 9 * np.ones(
+            (saved_southwest_dataset_train.shape[0],), dtype=int
+        )
+
+        print(np.max(saved_southwest_dataset_train))
+
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                ),
+            ]
+        )
+
+        self.poisoned_trainset = Customize_Dataset(
+            saved_southwest_dataset_train, sampled_targets_array_train, transform
+        )
+
+    def load_poisoned_testset(self):
+        """
+        Load the poisoned testing set
+        """
+        logging.info("Loading poisoned testing set.")
+        with open(self.poisoned_testset_dir, "rb") as test_f:
+            saved_southwest_dataset_test = pickle.load(test_f)
+
+        logging.info(
+            "shape of edge case test data (southwest airplane dataset test)",
+            saved_southwest_dataset_test.shape,
+        )
+
+        sampled_targets_array_test = 9 * np.ones(
+            (saved_southwest_dataset_test.shape[0],), dtype=int
+        )
+
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                ),
+            ]
+        )
+
+        self.poisoned_testset = Customize_Dataset(
+            saved_southwest_dataset_test, sampled_targets_array_test, transform
+        )
 
     def __init__(
         self,
@@ -129,6 +200,9 @@ class CIFAR10(Dataset):
         only_local=False,
         train_dir="",
         test_dir="",
+        poisoned_train_dir="",
+        poisoned_test_dir="",
+        # is_poisoned=False,
         sizes="",
         test_batch_size=1024,
         partition_niid="simple",
@@ -199,12 +273,19 @@ class CIFAR10(Dataset):
                 transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
             ]
         )
+        self.poisoned_trainset_dir = poisoned_train_dir
+        self.poisoned_testset_dir = poisoned_test_dir
 
         if self.__training__:
             self.load_trainset()
 
         if self.__testing__:
             self.load_testset()
+
+        if poisoned_test_dir and poisoned_train_dir:
+            self.__poisoning__ = True
+            self.load_poisoned_trainset()
+            self.load_poisoned_testset()
 
     def get_trainset(self, batch_size=1, shuffle=False):
         """
@@ -246,6 +327,50 @@ class CIFAR10(Dataset):
         if self.__testing__:
             return DataLoader(self.testset, batch_size=self.test_batch_size)
         raise RuntimeError("Test set not initialized!")
+
+    def get_poisoned_trainset(self, batch_size=1, shuffle=False):
+        """
+        Function to get the poisoned training set
+
+        Parameters
+        ----------
+        batch_size : int, optional
+            Batch size for learning
+
+        Returns
+        -------
+        torch.utils.Dataset(decentralizepy.datasets.Data)
+
+        Raises
+        ------
+        RuntimeError
+            If the training set was not initialized
+
+        """
+        if self.__poisoning__:
+            return DataLoader(
+                self.poisoned_trainset, batch_size=batch_size, shuffle=shuffle
+            )
+
+        raise RuntimeError("Poisoned Training set not initialized!")
+
+    def get_poisoned_testset(self):
+        """
+        Function to get the poisoned test set
+
+        Returns
+        -------
+        torch.utils.Dataset(decentralizepy.datasets.Data)
+
+        Raises
+        ------
+        RuntimeError
+            If the test set was not initialized
+
+        """
+        if self.__poisoning__:
+            return DataLoader(self.poisoned_testset, batch_size=self.test_batch_size)
+        raise RuntimeError("Poisoned Test set not initialized!")
 
     def get_validationset(self):
         """

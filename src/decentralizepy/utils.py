@@ -86,7 +86,7 @@ def get_args():
     parser.add_argument("-sm", "--server_machine", type=int, default=0)
     parser.add_argument("-sr", "--server_rank", type=int, default=-1)
     parser.add_argument("-wr", "--working_rate", type=float, default=1.0)
-
+    parser.add_argument("-mals", "--malicious_nodes", type=int, default=0)
     args = parser.parse_args()
     return args
 

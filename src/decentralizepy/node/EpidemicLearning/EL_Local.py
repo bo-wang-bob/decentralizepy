@@ -406,6 +406,7 @@ class EL_Local(Node):
         test_after=5,
         train_evaluate_after=1,
         reset_optimizer=1,
+        is_malicous=False,
         *args
     ):
         """
@@ -453,7 +454,8 @@ class EL_Local(Node):
             Other arguments
 
         """
-
+        self.is_malicous = is_malicous  # Malicious node or not
+        logging.info("Malicious: {}".format(self.is_malicous))
         total_threads = os.cpu_count()
         self.threads_per_proc = max(
             math.floor(total_threads / mapping.procs_per_machine), 1

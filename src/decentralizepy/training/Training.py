@@ -4,6 +4,8 @@ import torch
 
 from decentralizepy import utils
 
+import itertools
+
 
 class Training:
     """
@@ -150,7 +152,7 @@ class Training:
                 count += 1
             logging.debug("Epoch: {} loss: {}".format(epoch, epoch_loss / count))
 
-    def train(self, dataset):
+    def train(self, dataset, do_attack=False):
         """
         One training iteration
 
@@ -162,16 +164,43 @@ class Training:
         """
         self.model.train()
 
-        if self.full_epochs:
-            self.train_full(dataset)
+        if not do_attack:
+            if self.full_epochs:
+                self.train_full(dataset)
+            else:
+                iter_loss = 0.0
+                count = 0
+                trainset = dataset.get_trainset(self.batch_size, self.shuffle)
+                while count < self.rounds:
+                    for data, target in trainset:
+                        iter_loss += self.trainstep(data, target)
+                        count += 1
+                        logging.debug(
+                            "Round: {} loss: {}".format(count, iter_loss / count)
+                        )
+                        if count >= self.rounds:
+                            break
         else:
+            logging.info("Starting attack")
+
             iter_loss = 0.0
             count = 0
             trainset = dataset.get_trainset(self.batch_size, self.shuffle)
+            poisonset = dataset.get_poisoned_trainset(self.batch_size, self.shuffle)
+
+            trainset_iter = iter(trainset)
+            poisonset_iter = itertools.cycle(poisonset)
+            # logging.info("Poisoned set: {}".format(len(poisonset)))
             while count < self.rounds:
-                for data, target in trainset:
+                for data, target in trainset_iter:
+                    poison_data, poison_target = next(poisonset_iter)
+
+                    data = torch.cat((data, poison_data))
+                    target = torch.cat((target, poison_target))
                     iter_loss += self.trainstep(data, target)
                     count += 1
+
                     logging.debug("Round: {} loss: {}".format(count, iter_loss / count))
                     if count >= self.rounds:
                         break
+        logging.info("Training done")

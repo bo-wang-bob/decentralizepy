@@ -21,6 +21,7 @@ Copy-Item -Path $config_file -Destination $run_path -Force
 # 环境设置
 $env_python = "python" # Python 可执行文件路径，推荐使用 conda 环境
 $machines = 1 # 运行时的机器数量
+$malicous_nodes = 4 # 恶意节点数量
 $iterations = 2000
 $test_after = 20
 $eval_file = Join-Path $script_path "testingEL_Local.py" # 分布式驱动代码（每台机器上运行）
@@ -56,7 +57,8 @@ $command = "& $env_python $eval_file " +
 "-ta $test_after " +
 "-cf `"$run_path/$(Split-Path -Leaf $config_file)`" " +
 "-ll $log_level " +
-"-wsd $log_dir"
+"-wsd $log_dir" +
+"-mals $malicous_nodes"
 
 # 输出最终的命令形式
 Write-Host "Executing Command: $command"
@@ -75,7 +77,8 @@ Write-Host "Executing Command: $command"
     -ta $test_after `
     -cf "$run_path/$(Split-Path -Leaf $config_file)" `
     -ll $log_level `
-    -wsd $log_dir
+    -wsd $log_dir `
+    -mals $malicous_nodes
 
 $end_time = Get-Date
 $duration = $end_time - $start_time
