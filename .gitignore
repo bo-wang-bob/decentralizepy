@@ -1,6 +1,7 @@
 **/.idea
 **/__pycache__/
 **/data/
+**/poison_dataset/
 **/.DS_Store
 **/results/
 **/experiment_results/

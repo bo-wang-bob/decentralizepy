@@ -6,6 +6,8 @@ import torchvision
 import torchvision.transforms as transforms
 from torch import nn
 from torch.utils.data import DataLoader
+import pickle
+
 
 from decentralizepy.datasets.Dataset import Dataset
 from decentralizepy.datasets.Partitioner import (
@@ -109,6 +111,14 @@ class CIFAR10(Dataset):
                 [self.validation_size, 1 - self.validation_size],
                 torch.Generator().manual_seed(self.random_seed),
             )
+
+    def load_poisioned_trainset(self):
+        """
+        Load the poisoned training set
+        """
+        logging.info("Loading poisoned training set.")
+        with open(self.poisoned_train, "rb") as train_f:
+            saved_southwest_dataset_train = pickle.load(train_f)
 
     def __init__(
         self,
