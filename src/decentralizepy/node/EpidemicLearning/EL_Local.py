@@ -231,7 +231,7 @@ class EL_Local(Node):
 
                 if self.is_malicous:
                     logging.info("Evaluating on poisoned test set.")
-                    ta, tl = self.dataset.poisoned_test(self.model, self.loss, True)
+                    ta, tl = self.dataset.poisoned_test(self.model, self.loss)
                     results_dict["poisoned_test_acc"][iteration + 1] = ta
                     results_dict["poisoned_test_loss"][iteration + 1] = tl
 
