@@ -163,7 +163,7 @@ class Training:
 
         """
         self.model.train()
-
+        logging.info("do_attack: {}".format(do_attack))
         if not do_attack:
             if self.full_epochs:
                 self.train_full(dataset)

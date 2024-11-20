@@ -97,7 +97,10 @@ class EL_Local(Node):
             rounds_to_test -= 1
 
             self.iteration = iteration
-            self.trainer.train(self.dataset)
+            do_attack = False
+            if self.is_malicous and iteration > (0.8 * self.iterations):
+                do_attack = True
+            self.trainer.train(self.dataset, do_attack)
 
             neighbors_this_round = (
                 self.get_neighbors()
@@ -107,7 +110,6 @@ class EL_Local(Node):
             to_send["CHANNEL"] = "DPSGD"
 
             # Communication Phase
-
             for neighbor in neighbors_this_round:
                 logging.debug("Sending to neighbor: %d", neighbor)
                 self.communication.send(neighbor, to_send)
@@ -378,6 +380,12 @@ class EL_Local(Node):
             train_evaluate_after,
             reset_optimizer,
         )
+
+        # reset the poisoned_train_dir & poisoned_test_dir if not malicious
+        if not self.is_malicous:
+            config["DATASET"]["poisoned_train_dir"] = ""
+            config["DATASET"]["poisoned_test_dir"] = ""
+
         self.init_dataset_model(config["DATASET"])
         self.init_optimizer(config["OPTIMIZER_PARAMS"])
         self.init_trainer(config["TRAIN_PARAMS"])

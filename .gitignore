@@ -13,3 +13,5 @@ eval/data**
 **/massif.out*
 *swp
 build
+code.ipynb
+image.ipynb

@@ -137,10 +137,10 @@ class CIFAR10(Dataset):
         with open(self.poisoned_trainset_dir, "rb") as train_f:
             saved_southwest_dataset_train = pickle.load(train_f)
 
-        logging.info(
-            "shape of edge case train data (southwest airplane dataset train)",
-            saved_southwest_dataset_train.shape,
-        )
+        # logging.info(
+        #     "shape of edge case train data (southwest airplane dataset train)",
+        #     saved_southwest_dataset_train.shape,
+        # )
 
         sampled_targets_array_train = 9 * np.ones(
             (saved_southwest_dataset_train.shape[0],), dtype=int
@@ -169,10 +169,10 @@ class CIFAR10(Dataset):
         with open(self.poisoned_testset_dir, "rb") as test_f:
             saved_southwest_dataset_test = pickle.load(test_f)
 
-        logging.info(
-            "shape of edge case test data (southwest airplane dataset test)",
-            saved_southwest_dataset_test.shape,
-        )
+        # logging.info(
+        #     "shape of edge case test data (southwest airplane dataset test)",
+        #     saved_southwest_dataset_test.shape,
+        # )
 
         sampled_targets_array_test = 9 * np.ones(
             (saved_southwest_dataset_test.shape[0],), dtype=int

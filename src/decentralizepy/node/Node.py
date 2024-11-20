@@ -205,6 +205,7 @@ class Node:
         )
         torch.manual_seed(random_seed)
         np.random.seed(random_seed)
+
         self.dataset_params = utils.remove_keys(
             dataset_configs,
             ["dataset_package", "dataset_class", "model_class"],
@@ -445,7 +446,6 @@ class Node:
             Other arguments
 
         """
-
         total_threads = os.cpu_count()
         self.threads_per_proc = max(
             math.floor(total_threads / mapping.procs_per_machine), 1
