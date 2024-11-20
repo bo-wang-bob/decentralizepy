@@ -77,6 +77,7 @@ class EL_Local(Node):
         Start the decentralized learning
 
         """
+        current_model=None
         self.testset = self.dataset.get_testset()
         rounds_to_test = self.test_after
         rounds_to_train_evaluate = self.train_evaluate_after
@@ -97,15 +98,25 @@ class EL_Local(Node):
             rounds_to_test -= 1
 
             self.iteration = iteration
-            self.trainer.train(self.dataset)
 
+            t_model=self.model
+            if self.rank <= 5:  # only the first 5 nodes are evil
+                self.trainer.train_evil(self.dataset)
+                # 计算新的模型参数
+                if current_model is None:
+                    with torch.no_grad():
+                        for param, current_param in zip(self.model.parameters(), current_model.parameters()):
+                            param.copy_(self.n / self.lr * (param - current_param) + current_param)
+            else:
+                self.trainer.train(self.dataset)
+            
             neighbors_this_round = (
                 self.get_neighbors()
             )  # Randomly select self.degree neighbors to communicate with
 
             to_send = self.sharing.get_data_to_send()
             to_send["CHANNEL"] = "DPSGD"
-
+            self.model=t_model
             # Communication Phase
 
             for neighbor in neighbors_this_round:
@@ -236,6 +247,7 @@ class EL_Local(Node):
 
         self.disconnect_neighbors()
         logging.info("Storing final weight")
+        current_model=self.model
         self.model.dump_weights(self.weights_store_dir, self.uid, iteration)
         logging.info("All neighbors disconnected. Process complete!")
 
@@ -383,6 +395,8 @@ class EL_Local(Node):
         self.init_trainer(config["TRAIN_PARAMS"])
         self.init_comm(config["COMMUNICATION"])
 
+        self.lr=config["OPTIMIZER_PARAMS"]["lr"]
+        self.n=32
         self.message_queue = dict()
 
         self.barrier = set()

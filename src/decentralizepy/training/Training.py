@@ -175,3 +175,84 @@ class Training:
                     logging.debug("Round: {} loss: {}".format(count, iter_loss / count))
                     if count >= self.rounds:
                         break
+
+    def train_full_evil(self, dataset):
+        """
+        One training iteration, goes through the entire dataset
+
+        Parameters
+        ----------
+        trainset : torch.utils.data.Dataloader
+            The training dataset.
+
+        """
+        malicious_data = torch.load('eval/data/malicious_cifar10_train.pt')
+        for epoch in range(self.rounds):
+            trainset = dataset.get_trainset(self.batch_size, self.shuffle)
+            # 将trainset转换为列表以便修改
+            trainset_list = list(trainset)
+            trainset_size = len(trainset_list)
+            
+            # 计算20%的数据量
+            replace_size = int(0.2 * trainset_size)
+            
+            # 替换20%的数据
+            trainset_list = trainset_list[replace_size:] + malicious_data[:replace_size]
+            
+            # 将修改后的列表转换回DataLoader
+            trainset = torch.utils.data.DataLoader(trainset_list, batch_size=self.batch_size, shuffle=self.shuffle)
+            epoch_loss = 0.0
+            count = 0
+            for data, target in trainset:
+                logging.debug(
+                    "Starting minibatch {} with num_samples: {}".format(
+                        count, len(data)
+                    )
+                )
+                logging.debug("Classes: {}".format(target))
+                epoch_loss += self.trainstep(data, target)
+                count += 1
+            logging.debug("Epoch: {} loss: {}".format(epoch, epoch_loss / count))       
+
+    def train_evil(self, dataset):
+        """
+        One training iteration
+
+        Parameters
+        ----------
+        dataset : decentralizepy.datasets.Dataset
+            The training dataset. Should implement get_trainset(batch_size, shuffle)
+
+        """
+        self.model.train()
+
+        # 加载恶意数据集
+        malicious_data = torch.load('eval/data/malicious_cifar10_train.pt')
+
+        if self.full_epochs:
+            self.train_full_evil(dataset)
+        else:
+            iter_loss = 0.0
+            count = 0
+            trainset = dataset.get_trainset(self.batch_size, self.shuffle)
+            
+            # 将trainset转换为列表以便修改
+            trainset_list = list(trainset)
+            trainset_size = len(trainset_list)
+            
+            # 计算20%的数据量
+            replace_size = int(0.2 * trainset_size)
+            
+            # 替换20%的数据
+            trainset_list = trainset_list[replace_size:] + malicious_data[:replace_size]
+            
+            # 将修改后的列表转换回DataLoader
+            trainset = torch.utils.data.DataLoader(trainset_list, batch_size=self.batch_size, shuffle=self.shuffle)
+            
+            while count < self.rounds:
+                for data, target in trainset:
+                    iter_loss += self.trainstep(data, target)
+                    count += 1
+                    logging.debug("Round: {} loss: {}".format(count, iter_loss / count))
+                    if count >= self.rounds:
+                        break

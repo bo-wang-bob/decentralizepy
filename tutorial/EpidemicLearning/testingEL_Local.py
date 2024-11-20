@@ -35,6 +35,7 @@ if __name__ == "__main__":
     }
 
     config = read_ini(args.config_file)
+    # exit()
     my_config = dict()
     for section in config:
         my_config[section] = dict(config.items(section))
