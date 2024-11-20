@@ -21,8 +21,10 @@ from decentralizepy.models.Model import Model
 
 NUM_CLASSES = 10
 
+from torch.utils.data import Dataset as DSet
 
-class Customize_Dataset(Dataset):
+
+class Customize_Dataset(DSet):
     def __init__(self, X, Y, transform):
         self.train_data = X
         self.targets = Y
@@ -445,6 +447,63 @@ class CIFAR10(Dataset):
         accuracy = 100 * float(total_correct) / total_predicted
         loss_val = loss_val / count
         logging.info("Overall test accuracy is: {:.1f} %".format(accuracy))
+        return accuracy, loss_val
+
+    def poisoned_test(self, model, loss):
+        """
+        Function to evaluate model on the poisoned test dataset.
+
+        Parameters
+        ----------
+        model : decentralizepy.models.Model
+            Model to evaluate
+        loss : torch.nn.loss
+            Loss function to use
+
+        Returns
+        -------
+        tuple(float, float)
+
+        """
+        model.eval()
+        testloader = self.get_poisoned_testset()
+
+        logging.debug("Poisoned Test Loader instantiated.")
+
+        correct_pred = [0 for _ in range(NUM_CLASSES)]
+        total_pred = [0 for _ in range(NUM_CLASSES)]
+
+        total_correct = 0
+        total_predicted = 0
+
+        with torch.no_grad():
+            loss_val = 0.0
+            count = 0
+            for elems, labels in testloader:
+                outputs = model(elems)
+                loss_val += loss(outputs, labels).item()
+                count += 1
+                _, predictions = torch.max(outputs, 1)
+                for label, prediction in zip(labels, predictions):
+                    logging.debug("{} predicted as {}".format(label, prediction))
+                    if label == prediction:
+                        correct_pred[label] += 1
+                        total_correct += 1
+                    total_pred[label] += 1
+                    total_predicted += 1
+
+        logging.debug("Predicted on the poisoned test set")
+
+        for key, value in enumerate(correct_pred):
+            if total_pred[key] != 0:
+                accuracy = 100 * float(value) / total_pred[key]
+            else:
+                accuracy = 100.0
+            logging.debug("Accuracy for class {} is: {:.1f} %".format(key, accuracy))
+
+        accuracy = 100 * float(total_correct) / total_predicted
+        loss_val = loss_val / count
+        logging.info("Overall poisoned test accuracy is: {:.1f} %".format(accuracy))
         return accuracy, loss_val
 
     def validate(self, model, loss):

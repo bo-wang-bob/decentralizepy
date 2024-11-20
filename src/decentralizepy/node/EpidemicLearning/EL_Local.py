@@ -100,7 +100,8 @@ class EL_Local(Node):
             do_attack = False
             if self.is_malicous and iteration > (0.8 * self.iterations):
                 do_attack = True
-            self.trainer.train(self.dataset, do_attack)
+
+            self.trainer.train(self.dataset, do_attack)  # Train the model
 
             neighbors_this_round = (
                 self.get_neighbors()
@@ -185,6 +186,8 @@ class EL_Local(Node):
                     "train_loss": {},
                     "test_loss": {},
                     "test_acc": {},
+                    "poisoned_test_acc": {},
+                    "poisoned_test_loss": {},
                     "total_bytes": {},
                     "total_meta": {},
                     "total_data_per_n": {},
@@ -220,11 +223,17 @@ class EL_Local(Node):
                 )
 
             if self.dataset.__testing__ and rounds_to_test == 0:
-                rounds_to_test = self.test_after * change
+                rounds_to_test = self.test_after * change  # change 用于减缓测试频率
                 logging.info("Evaluating on test set.")
                 ta, tl = self.dataset.test(self.model, self.loss)
                 results_dict["test_acc"][iteration + 1] = ta
                 results_dict["test_loss"][iteration + 1] = tl
+
+                if self.is_malicous:
+                    logging.info("Evaluating on poisoned test set.")
+                    ta, tl = self.dataset.poisoned_test(self.model, self.loss, True)
+                    results_dict["poisoned_test_acc"][iteration + 1] = ta
+                    results_dict["poisoned_test_loss"][iteration + 1] = tl
 
                 if global_epoch == 49:
                     change *= 2
@@ -274,7 +283,7 @@ class EL_Local(Node):
         weights_store_dir : str
             Directory in which to store model weights
         test_after : int
-            Number of iterations after which the test loss and accuracy arecalculated
+            Number of iterations after which the test loss and accuracy are calculated
         train_evaluate_after : int
             Number of iterations after which the train loss is calculated
         reset_optimizer : int

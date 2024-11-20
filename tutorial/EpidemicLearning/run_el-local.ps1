@@ -5,7 +5,7 @@ $script_path = (Get-Location).Path
 Write-Host "Script path is $script_path"
 
 # 定义路径和变量
-$graph = Join-Path $script_path "fullyConnected_32.edges" # 图文件的绝对路径
+$graph = Join-Path $script_path "fullyConnected_16.edges" # 图文件的绝对路径
 $run_path = Join-Path $script_path "../../eval/data" # 运行路径的绝对路径
 $config_file = Join-Path $script_path "config_EL.ini"
 
@@ -32,7 +32,7 @@ Write-Host "M is $m"
 
 # 每台机器的进程数
 $malicous_nodes = 4 # 每台机器的恶意节点数量
-$procs_per_machine = 32 # 每台机器的进程数 这个好像是节点数
+$procs_per_machine = 16 # 每台机器的进程数 这个好像是节点数
 Write-Host "Procs per machine is $procs_per_machine"
 
 # 创建日志目录
