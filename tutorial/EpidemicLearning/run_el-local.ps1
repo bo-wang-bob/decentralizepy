@@ -24,7 +24,7 @@ $machines = 1 # 运行时的机器数量
 $iterations = 200
 $test_after = 20
 $eval_file = Join-Path $script_path "testingEL_Local.py" # 分布式驱动代码（每台机器上运行）
-$log_level = "DEBUG" # 可选值：DEBUG | INFO | WARN | CRITICAL
+$log_level = "INFO" # 可选值：DEBUG | INFO | WARN | CRITICAL
 
 # 机器 ID
 $m = 0 # 与 ip.json 一致的机器 ID
