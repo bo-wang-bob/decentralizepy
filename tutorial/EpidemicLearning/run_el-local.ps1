@@ -31,6 +31,8 @@ $m = 0 # 与 ip.json 一致的机器 ID
 Write-Host "M is $m"
 
 # 每台机器的进程数
+$attack_method = "MR" # 可选值：EDGE_CASE | NEUROTOXIN | MR
+$gradmask_ratio = 0.8
 $malicous_nodes = 4 # 每台机器的恶意节点数量
 $procs_per_machine = 16 # 每台机器的进程数 这个好像是节点数
 Write-Host "Procs per machine is $procs_per_machine"
@@ -58,7 +60,9 @@ $command = "& $env_python $eval_file " +
 "-cf `"$run_path/$(Split-Path -Leaf $config_file)`" " +
 "-ll $log_level " +
 "-wsd $log_dir" +
-"-mals $malicous_nodes"
+"-mals $malicous_nodes" +
+"-am $attack_method" +
+"-gr $gradmask_ratio"
 
 # 输出最终的命令形式
 Write-Host "Executing Command: $command"
@@ -78,7 +82,9 @@ Write-Host "Executing Command: $command"
     -cf "$run_path/$(Split-Path -Leaf $config_file)" `
     -ll $log_level `
     -wsd $log_dir `
-    -mals $malicous_nodes
+    -mals $malicous_nodes `
+    -am $attack_method `
+    -gr $gradmask_ratio
 
 $end_time = Get-Date
 $duration = $end_time - $start_time

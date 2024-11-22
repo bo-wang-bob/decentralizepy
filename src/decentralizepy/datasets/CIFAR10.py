@@ -8,7 +8,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 import pickle
 import numpy as np
-
+import random
 from decentralizepy.datasets.Dataset import Dataset
 from decentralizepy.datasets.Partitioner import (
     DataPartitioner,
@@ -25,7 +25,7 @@ from torch.utils.data import Dataset as DSet
 
 
 class Customize_Dataset(DSet):
-    def __init__(self, X, Y, transform):
+    def __init__(self, X, Y, transform=None):
         self.train_data = X
         self.targets = Y
         self.transform = transform
@@ -33,8 +33,8 @@ class Customize_Dataset(DSet):
     def __getitem__(self, index):
         data = self.train_data[index]
         target = self.targets[index]
-        data = self.transform(data)
-
+        if self.transform:
+            data = self.transform(data)
         return data, target
 
     def __len__(self):
@@ -56,6 +56,7 @@ class CIFAR10(Dataset):
         trainset = torchvision.datasets.CIFAR10(
             root=self.train_dir, train=True, download=True, transform=self.transform
         )
+        self.base_trainset = trainset
 
         if self.__validating__ and self.validation_source == "Train":
             logging.info("Extracting the validation set from the train set.")
@@ -64,7 +65,6 @@ class CIFAR10(Dataset):
                 [self.validation_size, 1 - self.validation_size],
                 torch.Generator().manual_seed(self.random_seed),
             )
-
         c_len = len(trainset)
 
         if self.sizes == None:  # Equal distribution of data among processes
@@ -73,7 +73,6 @@ class CIFAR10(Dataset):
             self.sizes = [frac] * self.num_partitions
             self.sizes[-1] += 1.0 - frac * self.num_partitions
             logging.debug("Size fractions: {}".format(self.sizes))
-
         if not self.partition_niid or self.partition_niid == "iid":
             # IID partitioning
             self.trainset = DataPartitioner(
@@ -95,7 +94,7 @@ class CIFAR10(Dataset):
             self.partition_niid == "kshard" or str(self.partition_niid) == "True"
         ):  # Backward compatibility
             if str(self.partition_niid) == "True":
-                logging.warn(
+                logging.warning(
                     "Using True as partition_niid is deprecated. Use kshard instead. Will be removed in future versions."
                 )
             train_data = {key: [] for key in range(self.num_classes)}
@@ -112,6 +111,12 @@ class CIFAR10(Dataset):
                 "Partitioning method {} not implemented".format(self.partition_niid)
             )
 
+        # 收集trainset中每类图片索引
+        self.class_indices = {i: [] for i in range(10)}  # CIFAR-10有10个类别
+        for idx, x in enumerate(self.base_trainset):
+            _, label = x
+            self.class_indices[label].append(idx)
+
     def load_testset(self):
         """
         Loads the testing set.
@@ -122,7 +127,6 @@ class CIFAR10(Dataset):
         self.testset = torchvision.datasets.CIFAR10(
             root=self.test_dir, train=False, download=True, transform=self.transform
         )
-
         if self.__validating__ and self.validation_source == "Test":
             logging.info("Extracting the validation set from the test set.")
             self.validationset, self.testset = torch.utils.data.random_split(
@@ -135,63 +139,112 @@ class CIFAR10(Dataset):
         """
         Load the poisoned training set
         """
-        logging.info("Loading poisoned training set.")
-        with open(self.poisoned_trainset_dir, "rb") as train_f:
-            saved_southwest_dataset_train = pickle.load(train_f)
+        logging.info(f"Loading poisoned training set: {self.attack_method}")
 
-        # logging.info(
-        #     "shape of edge case train data (southwest airplane dataset train)",
-        #     saved_southwest_dataset_train.shape,
-        # )
-
-        sampled_targets_array_train = 9 * np.ones(
-            (saved_southwest_dataset_train.shape[0],), dtype=int
-        )
-
-        print(np.max(saved_southwest_dataset_train))
-
-        transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
-                ),
+        if self.attack_method.lower() in ["edge_case", "neurotoxin"]:
+            with open(self.poisoned_trainset_dir, "rb") as train_f:
+                saved_southwest_dataset_train = pickle.load(train_f)
+            sampled_targets_array_train = 9 * np.ones(
+                (saved_southwest_dataset_train.shape[0],), dtype=int
+            )
+            transform = transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                    ),
+                ]
+            )
+            self.poisoned_trainset = Customize_Dataset(
+                saved_southwest_dataset_train, sampled_targets_array_train, transform
+            )
+            logging.info(
+                f"Number of samples in the poisoned training set: {len(self.poisoned_trainset)}"
+            )
+        elif self.attack_method.lower() in ["mr"]:
+            # 带有条纹的小汽车
+            poisoned_image_idx = [
+                330,
+                568,
+                30560,
+                30696,
+                33105,
+                33615,
+                33907,
+            ]  # 训练图片
+            poisoned_images = [self.base_trainset[idx][0] for idx in poisoned_image_idx]
+            shape = poisoned_images[0].shape
+            poisoned_images = [
+                poisoned_image.add_(torch.FloatTensor(shape).normal_(0, 0.01))
+                for poisoned_image in poisoned_images
             ]
-        )
-
-        self.poisoned_trainset = Customize_Dataset(
-            saved_southwest_dataset_train, sampled_targets_array_train, transform
-        )
+            poisoned_labels = [self.target_label] * len(poisoned_image_idx)
+            self.poisoned_trainset = Customize_Dataset(poisoned_images, poisoned_labels)
+            logging.info(
+                f"Number of samples in the poisoned training set: {len(self.poisoned_trainset)}"
+            )
+        else:
+            raise NotImplementedError(
+                f"Attack method {self.attack_method} not implemented for CIFAR10"
+            )
 
     def load_poisoned_testset(self):
         """
         Load the poisoned testing set
         """
-        logging.info("Loading poisoned testing set.")
-        with open(self.poisoned_testset_dir, "rb") as test_f:
-            saved_southwest_dataset_test = pickle.load(test_f)
-
-        # logging.info(
-        #     "shape of edge case test data (southwest airplane dataset test)",
-        #     saved_southwest_dataset_test.shape,
-        # )
-
-        sampled_targets_array_test = 9 * np.ones(
-            (saved_southwest_dataset_test.shape[0],), dtype=int
-        )
-
-        transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
-                ),
+        logging.info(f"Loading poisoned testing set: {self.attack_method}")
+        if self.attack_method.lower() in ["edge_case", "neurotoxin"]:
+            with open(self.poisoned_testset_dir, "rb") as test_f:
+                saved_southwest_dataset_test = pickle.load(test_f)
+            sampled_targets_array_test = 9 * np.ones(
+                (saved_southwest_dataset_test.shape[0],), dtype=int
+            )
+            transform = transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                    ),
+                ]
+            )
+            self.poisoned_testset = Customize_Dataset(
+                saved_southwest_dataset_test, sampled_targets_array_test, transform
+            )
+            logging.info(
+                f"Number of samples in the poisoned test set: {len(self.poisoned_testset)}"
+            )
+        elif self.attack_method.lower() in ["mr"]:
+            # 带有条纹的小汽车
+            poisoned_image_idx = [
+                330,
+                568,
+                30560,
+                30696,
+                33105,
+                33615,
+                33907,
+                3934,
+                12336,
+                40713,
+                41706,
+            ]  # 测试图片
+            poisoned_images = [self.base_trainset[idx][0] for idx in poisoned_image_idx]
+            shape = poisoned_images[0].shape
+            poisoned_images = [
+                poisoned_image.add_(torch.FloatTensor(shape).normal_(0, 0.01))
+                for poisoned_image in poisoned_images
             ]
-        )
-
-        self.poisoned_testset = Customize_Dataset(
-            saved_southwest_dataset_test, sampled_targets_array_test, transform
-        )
+            poisoned_labels = [self.target_label] * len(poisoned_image_idx)
+            self.poisoned_testset = Customize_Dataset(
+                poisoned_images, poisoned_labels
+            )  # 这里的图片已经是经过transform的
+            logging.info(
+                f"Number of samples in the poisoned test set: {len(self.poisoned_testset)}"
+            )
+        else:
+            raise NotImplementedError(
+                f"Attack method {self.attack_method} not implemented for CIFAR10"
+            )
 
     def __init__(
         self,
@@ -202,9 +255,12 @@ class CIFAR10(Dataset):
         only_local=False,
         train_dir="",
         test_dir="",
+        # malicous config
         poisoned_train_dir="",
         poisoned_test_dir="",
-        # is_poisoned=False,
+        attack_method="",
+        gradmask_ratio=1,
+        target_label=9,
         sizes="",
         test_batch_size=1024,
         partition_niid="simple",
@@ -275,8 +331,12 @@ class CIFAR10(Dataset):
                 transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
             ]
         )
+        # attack config
         self.poisoned_trainset_dir = poisoned_train_dir
         self.poisoned_testset_dir = poisoned_test_dir
+        self.attack_method = attack_method
+        self.gradmask_ratio = gradmask_ratio
+        self.target_label = target_label
 
         if self.__training__:
             self.load_trainset()
@@ -311,6 +371,68 @@ class CIFAR10(Dataset):
         if self.__training__:
             return DataLoader(self.trainset, batch_size=batch_size, shuffle=shuffle)
         raise RuntimeError("Training set not initialized!")
+
+    def get_cleanset_under_neurotoxin(self, batch_size=1, shuffle=False):
+        selected_indices = []
+        for lable in range(10):
+            selected_indices.extend(random.sample(self.class_indices[lable], 100))
+        logging.info(
+            f"Number of samples in the training set under neurotoxin: {len(selected_indices)}"
+        )
+        cleanset_under_neurotoxin = torch.utils.data.Subset(
+            self.base_trainset, selected_indices
+        )
+        return DataLoader(
+            cleanset_under_neurotoxin, batch_size=batch_size, shuffle=shuffle
+        )
+
+    def get_trainset_under_attack(self, batch_size=1, shuffle=False):
+        """
+        Function to get the training set under attack
+
+        Parameters
+        ----------
+        batch_size : int, optional
+            Batch size for learning
+
+        Returns
+        -------
+        torch.utils.Dataset(decentralizepy.datasets.Data)
+
+        Raises
+        ------
+        RuntimeError
+            If the training set was not initialized
+
+        """
+        if self.__poisoning__:
+            total_idx = list(range(len(self.base_trainset)))
+            for idx, x in enumerate(self.base_trainset):
+                _, label = x
+                if label == self.target_label:
+                    total_idx.remove(idx)
+            if self.attack_method.lower() in ["mr"]:
+                idx_to_remove = [
+                    330,
+                    568,
+                    30560,
+                    30696,
+                    33105,
+                    33615,
+                    33907,
+                ]
+                for idx in idx_to_remove:
+                    total_idx.remove(idx)
+            logging.info(
+                f"Number of samples in the training set under attack: {len(total_idx)}"
+            )
+            random.shuffle(total_idx)
+            trainset_under_attack = torch.utils.data.Subset(
+                self.base_trainset, total_idx
+            )
+            return DataLoader(
+                trainset_under_attack, batch_size=batch_size, shuffle=shuffle
+            )
 
     def get_testset(self):
         """

@@ -394,6 +394,11 @@ class EL_Local(Node):
         if not self.is_malicous:
             config["DATASET"]["poisoned_train_dir"] = ""
             config["DATASET"]["poisoned_test_dir"] = ""
+        else:
+            config["DATASET"]["attack_method"] = self.attack_method
+            config["DATASET"]["gradmask_ratio"] = self.gradmask_ratio
+            config["TRAIN_PARAMS"]["attack_method"] = self.attack_method
+            config["TRAIN_PARAMS"]["gradmask_ratio"] = self.gradmask_ratio
 
         self.init_dataset_model(config["DATASET"])
         self.init_optimizer(config["OPTIMIZER_PARAMS"])
@@ -424,6 +429,8 @@ class EL_Local(Node):
         train_evaluate_after=1,
         reset_optimizer=1,
         is_malicous=False,
+        attack_method="",
+        gradmask_ratio=1.0,
         *args
     ):
         """
@@ -472,6 +479,9 @@ class EL_Local(Node):
 
         """
         self.is_malicous = is_malicous  # Malicious node or not
+        self.attack_method = attack_method
+        self.gradmask_ratio = gradmask_ratio
+
         logging.info("Malicious: {}".format(self.is_malicous))
         total_threads = os.cpu_count()
         self.threads_per_proc = max(

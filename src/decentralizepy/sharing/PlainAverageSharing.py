@@ -8,7 +8,6 @@ from decentralizepy.sharing.Sharing import Sharing
 class PlainAverageSharing(Sharing):
     """
     Class to do plain averaging instead of Metropolis Hastings
-
     """
 
     def __init__(

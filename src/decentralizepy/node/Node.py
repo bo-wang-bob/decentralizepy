@@ -198,8 +198,12 @@ class Node:
             Python dict containing dataset config params
 
         """
-        dataset_module = importlib.import_module(dataset_configs["dataset_package"])
-        self.dataset_class = getattr(dataset_module, dataset_configs["dataset_class"])
+        dataset_module = importlib.import_module(
+            dataset_configs["dataset_package"]
+        )  # 加载模块
+        self.dataset_class = getattr(
+            dataset_module, dataset_configs["dataset_class"]
+        )  # 加载类
         random_seed = (
             dataset_configs["random_seed"] if "random_seed" in dataset_configs else 97
         )

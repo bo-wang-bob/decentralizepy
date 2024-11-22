@@ -52,7 +52,11 @@ if __name__ == "__main__":
     m_id = args.machine_id
     print("###############Machine ID: ", m_id)
     malicous_nodes = list(range(args.malicious_nodes))
-
+    attack_method = args.attack_method if len(malicous_nodes) != 0 else ""
+    gradmask_ratio = args.gradmask_ratio if attack_method.lower() == "neurotoxin" else 1
+    print(
+        f"malicous_nodes: {malicous_nodes}, attack-method: {attack_method}, gradmask_ratio: {gradmask_ratio}"
+    )
     processes = []
     for r in range(procs_per_machine):
         if r in malicous_nodes:
@@ -73,6 +77,8 @@ if __name__ == "__main__":
                         args.train_evaluate_after,
                         args.reset_optimizer,
                         True,
+                        attack_method,
+                        gradmask_ratio,
                     ],
                 )
             )
