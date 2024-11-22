@@ -107,6 +107,8 @@ class EL_Local(Node):
                 self.get_neighbors()
             )  # Randomly select self.degree neighbors to communicate with
 
+            logging.info("Neighbors this round: %s", neighbors_this_round)
+
             to_send = self.sharing.get_data_to_send()
             to_send["CHANNEL"] = "DPSGD"
 
@@ -125,6 +127,8 @@ class EL_Local(Node):
                             "NotWorking": True,
                         },
                     )
+
+            logging.info("the first round of send is done")
 
             while not self.received_from_all():
                 response = self.receive_DPSGD()
@@ -145,6 +149,8 @@ class EL_Local(Node):
                     else:
                         self.peer_deques[sender].append(data)
 
+            logging.info("the first round of receive is done")
+
             averaging_deque = dict()
             atleast_one = False
             for x in self.my_neighbors:
@@ -164,10 +170,52 @@ class EL_Local(Node):
                             )
                         )
 
+            # 这里增加安全聚合机制
             if atleast_one:
                 self.sharing._averaging(averaging_deque)
             else:
                 self.sharing.communication_round += 1
+
+            # 增加一轮通信，发送聚合后的模型
+            to_send = self.sharing.get_data_to_send()
+            to_send["CHANNEL"] = "DPSGD"
+
+            for neighbor in neighbors_this_round:
+                logging.debug("Sending to neighbor: %d", neighbor)
+                self.communication.send(neighbor, to_send)
+
+            for x in self.my_neighbors:
+                if x not in neighbors_this_round:
+                    self.communication.send(
+                        x,
+                        {
+                            "CHANNEL": "DPSGD",
+                            "iteration": iteration,
+                            "NotWorking": True,
+                        },
+                    )
+            logging.info("the second round of send is done")
+
+            while not self.received_from_all():
+                response = self.receive_DPSGD()
+                if response:
+                    sender, data = response
+                    logging.info(
+                        "Received Model from {} of iteration {}: {}".format(
+                            sender,
+                            data["iteration"],
+                            "NotWorking" if "NotWorking" in data else "",
+                        )
+                    )
+                    if sender not in self.peer_deques:
+                        self.peer_deques[sender] = deque()
+
+                    if data["iteration"] == self.iteration:
+                        self.peer_deques[sender].appendleft(data)
+                    else:
+                        self.peer_deques[sender].append(data)
+
+            logging.info("the second round of receive is done")
 
             if self.reset_optimizer:
                 self.optimizer = self.optimizer_class(
@@ -410,6 +458,9 @@ class EL_Local(Node):
         self.barrier = set()
         self.my_neighbors = self.graph.neighbors(self.uid)
 
+        for neighbor in self.my_neighbors:
+            self.model_history[neighbor] = list()
+
         self.init_sharing(config["SHARING"])
         self.peer_deques = dict()
         self.connect_neighbors()
@@ -481,6 +532,9 @@ class EL_Local(Node):
         self.is_malicous = is_malicous  # Malicious node or not
         self.attack_method = attack_method
         self.gradmask_ratio = gradmask_ratio
+
+        # 记录邻居的历史信息 neighbor_name -> {iteration -> {theta, grad}}
+        self.model_history = dict()
 
         logging.info("Malicious: {}".format(self.is_malicous))
         total_threads = os.cpu_count()

@@ -21,7 +21,7 @@ Copy-Item -Path $config_file -Destination $run_path -Force
 # 环境设置
 $env_python = "python" # Python 可执行文件路径，推荐使用 conda 环境
 $machines = 1 # 运行时的机器数量
-$iterations = 200
+$iterations = 2000
 $test_after = 20
 $eval_file = Join-Path $script_path "testingEL_Local.py" # 分布式驱动代码（每台机器上运行）
 $log_level = "INFO" # 可选值：DEBUG | INFO | WARN | CRITICAL
@@ -31,7 +31,7 @@ $m = 0 # 与 ip.json 一致的机器 ID
 Write-Host "M is $m"
 
 # 每台机器的进程数
-$attack_method = "MR" # 可选值：EDGE_CASE | NEUROTOXIN | MR
+$attack_method = "NEUROTOXIN" # 可选值：EDGE_CASE | NEUROTOXIN | MR
 $gradmask_ratio = 0.8
 $malicous_nodes = 4 # 每台机器的恶意节点数量
 $procs_per_machine = 16 # 每台机器的进程数 这个好像是节点数
