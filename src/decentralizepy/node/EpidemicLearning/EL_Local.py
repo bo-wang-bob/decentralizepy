@@ -90,7 +90,7 @@ class EL_Local(Node):
 
         logging.info("Total number of neighbor: {}".format(len(self.my_neighbors)))
 
-        for iteration in range(self.iterations):
+        for iteration in range(0,self.iterations*2,2):
             # Local Phase
             logging.info("Starting training iteration: %d", iteration)
             rounds_to_train_evaluate -= 1
@@ -190,12 +190,13 @@ class EL_Local(Node):
                         x,
                         {
                             "CHANNEL": "DPSGD",
-                            "iteration": iteration,
+                            "iteration": iteration + 1,
                             "NotWorking": True,
                         },
                     )
             logging.info("the second round of send is done")
-
+            
+            self.iteration += 1
             while not self.received_from_all():
                 response = self.receive_DPSGD()
                 if response:
