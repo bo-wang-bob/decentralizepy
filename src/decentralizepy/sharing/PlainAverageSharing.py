@@ -93,6 +93,7 @@ class PlainAverageSharing(Sharing):
                 iteration = data["iteration"]
                 del data["iteration"]
                 del data["CHANNEL"]
+                del data["start_model"]
                 logging.debug(
                     "Averaging model from neighbor {} of iteration {}".format(
                         n, iteration

@@ -86,10 +86,11 @@ class EL_Local(Node):
         self.rng.seed(self.dataset.random_seed + self.uid)
 
         self.connect_neighbors()
-        logging.info("Connected to all neighbors")
 
+        logging.info("Connected to all neighbors")
         logging.info("Total number of neighbor: {}".format(len(self.my_neighbors)))
 
+        # 发送时同时发送自己本轮初始的模型和在数据上迭代完后的模型
         for iteration in range(self.iterations):
             # Local Phase
             logging.info("Starting training iteration: %d", iteration)
@@ -97,12 +98,17 @@ class EL_Local(Node):
             rounds_to_test -= 1
 
             self.iteration = iteration
+
+            # 记录初始的模型
+            start_model = self.sharing.get_data_to_send()["params"]
+
             do_attack = False
             if self.is_malicous and iteration > (0.8 * self.iterations):
                 do_attack = True
 
             self.trainer.train(self.dataset, do_attack)  # Train the model
 
+            # 这里的选择策略需要更改
             neighbors_this_round = (
                 self.get_neighbors()
             )  # Randomly select self.degree neighbors to communicate with
@@ -111,6 +117,8 @@ class EL_Local(Node):
 
             to_send = self.sharing.get_data_to_send()
             to_send["CHANNEL"] = "DPSGD"
+            to_send["iteration"] = self.iteration
+            to_send["start_model"] = start_model
 
             # Communication Phase
             for neighbor in neighbors_this_round:
@@ -123,12 +131,10 @@ class EL_Local(Node):
                         x,
                         {
                             "CHANNEL": "DPSGD",
-                            "iteration": iteration,
+                            "iteration": self.iteration,
                             "NotWorking": True,
                         },
                     )
-
-            logging.info("the first round of send is done")
 
             while not self.received_from_all():
                 response = self.receive_DPSGD()
@@ -141,17 +147,24 @@ class EL_Local(Node):
                             "NotWorking" if "NotWorking" in data else "",
                         )
                     )
+
                     if sender not in self.peer_deques:
                         self.peer_deques[sender] = deque()
 
                     if data["iteration"] == self.iteration:
+                        logging.info(
+                            f"Received message from {sender} of iteration {data['iteration']}"
+                        )
                         self.peer_deques[sender].appendleft(data)
                     else:
+                        logging.info(
+                            f"Discarding message from {sender} of iteration {data['iteration']}"
+                        )
                         self.peer_deques[sender].append(data)
 
             logging.info("the first round of receive is done")
 
-            averaging_deque = dict()
+            averaging_deque = dict()  # \theta_{i}^{t + 1/2} for each neighbor i
             atleast_one = False
             for x in self.my_neighbors:
                 if x in self.peer_deques and len(self.peer_deques[x]) > 0:
@@ -161,6 +174,13 @@ class EL_Local(Node):
                         and "NotWorking" not in this_message
                     ):
                         averaging_deque[x] = self.peer_deques[x]
+                        logging.info(
+                            f"####### message from {x} of iteration {this_message['iteration']}"
+                        )
+                        self.model_history[x][self.iteration] = (
+                            this_message["start_model"],
+                            this_message["params"],
+                        )
                         atleast_one = True
                     elif this_message["iteration"] == self.iteration:
                         self.peer_deques[x].popleft()
@@ -175,47 +195,6 @@ class EL_Local(Node):
                 self.sharing._averaging(averaging_deque)
             else:
                 self.sharing.communication_round += 1
-
-            # 增加一轮通信，发送聚合后的模型
-            to_send = self.sharing.get_data_to_send()
-            to_send["CHANNEL"] = "DPSGD"
-
-            for neighbor in neighbors_this_round:
-                logging.debug("Sending to neighbor: %d", neighbor)
-                self.communication.send(neighbor, to_send)
-
-            for x in self.my_neighbors:
-                if x not in neighbors_this_round:
-                    self.communication.send(
-                        x,
-                        {
-                            "CHANNEL": "DPSGD",
-                            "iteration": iteration,
-                            "NotWorking": True,
-                        },
-                    )
-            logging.info("the second round of send is done")
-
-            while not self.received_from_all():
-                response = self.receive_DPSGD()
-                if response:
-                    sender, data = response
-                    logging.info(
-                        "Received Model from {} of iteration {}: {}".format(
-                            sender,
-                            data["iteration"],
-                            "NotWorking" if "NotWorking" in data else "",
-                        )
-                    )
-                    if sender not in self.peer_deques:
-                        self.peer_deques[sender] = deque()
-
-                    if data["iteration"] == self.iteration:
-                        self.peer_deques[sender].appendleft(data)
-                    else:
-                        self.peer_deques[sender].append(data)
-
-            logging.info("the second round of receive is done")
 
             if self.reset_optimizer:
                 self.optimizer = self.optimizer_class(
@@ -386,7 +365,7 @@ class EL_Local(Node):
         test_after=5,
         train_evaluate_after=1,
         reset_optimizer=1,
-        *args
+        *args,
     ):
         """
         Construct objects.
@@ -459,7 +438,7 @@ class EL_Local(Node):
         self.my_neighbors = self.graph.neighbors(self.uid)
 
         for neighbor in self.my_neighbors:
-            self.model_history[neighbor] = list()
+            self.model_history[neighbor] = dict()
 
         self.init_sharing(config["SHARING"])
         self.peer_deques = dict()
@@ -482,7 +461,7 @@ class EL_Local(Node):
         is_malicous=False,
         attack_method="",
         gradmask_ratio=1.0,
-        *args
+        *args,
     ):
         """
         Constructor
@@ -556,7 +535,7 @@ class EL_Local(Node):
             test_after,
             train_evaluate_after,
             reset_optimizer,
-            *args
+            *args,
         )
 
         nodeConfigs = config["NODE"]
