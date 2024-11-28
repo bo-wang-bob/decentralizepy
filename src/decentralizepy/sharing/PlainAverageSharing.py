@@ -2,6 +2,7 @@ import logging
 
 import torch
 
+import sklearn.metrics.pairwise as smp
 from decentralizepy.sharing.Sharing import Sharing
 
 
