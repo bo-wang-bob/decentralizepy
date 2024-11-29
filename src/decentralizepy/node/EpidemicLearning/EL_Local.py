@@ -192,7 +192,7 @@ class EL_Local(Node):
 
             # 这里增加安全聚合机制
             if atleast_one:
-                self.sharing._averaging(averaging_deque)
+                self.sharing._averaging(averaging_deque,self.lr)
             else:
                 self.sharing.communication_round += 1
 
@@ -511,7 +511,7 @@ class EL_Local(Node):
         self.is_malicous = is_malicous  # Malicious node or not
         self.attack_method = attack_method
         self.gradmask_ratio = gradmask_ratio
-
+        self.lr = config["OPTIMIZER_PARAMS"]["lr"]
         # 记录邻居的历史信息 neighbor_name -> {iteration -> {theta, grad}}
         self.model_history = dict()
 
