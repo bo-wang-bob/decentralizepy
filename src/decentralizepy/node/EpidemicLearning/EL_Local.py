@@ -193,7 +193,7 @@ class EL_Local(Node):
                         )
 
             # 这里增加安全聚合机制
-            if atleast_one:
+            if atleast_one and participant_sample_size>1:
                 self.sharing._averaging(averaging_deque,participant_sample_size)
             else:
                 self.sharing.communication_round += 1

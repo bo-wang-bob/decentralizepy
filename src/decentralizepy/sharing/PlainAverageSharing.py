@@ -115,7 +115,7 @@ class PlainAverageSharing(Sharing):
         epsilon = 10000
         lambda_ = 1 / epsilon * (math.sqrt(2 * math.log((1.25 / delta))))
         sigma = lambda_ * S_t.numpy()
-        print(f"sigma: {sigma}; #clean models / clean models: {k} / {predict_good}, median norm: {S_t},")
+        # print(f"sigma: {sigma}; #clean models / clean models: {k} / {predict_good}, median norm: {S_t},")
         trained_params.add_(torch.normal(0, sigma, size=trained_params.size()))
 
         # === bn ===
@@ -135,7 +135,7 @@ class PlainAverageSharing(Sharing):
         return trained_params.float().to("cpu"), global_update
 
     
-    def _averaging(self, peer_deques,global_lr,participant_sample_size):
+    def _averaging(self, peer_deques,participant_sample_size):
         """
         Averages the received model with the local model
 
@@ -143,7 +143,7 @@ class PlainAverageSharing(Sharing):
         self.received_this_round = 0
         with torch.no_grad():
             total = dict()
-            train_params = dict()
+            train_params = list()
             weight = 1 / (len(peer_deques) + 1)
             train_data = dict()
             for i, n in enumerate(peer_deques):
