@@ -4,7 +4,11 @@ import torch
 
 from collections import defaultdict
 import numpy as np
+import math
+import hdbscan
 import sklearn.metrics.pairwise as smp
+import copy
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from decentralizepy.sharing.Sharing import Sharing
 
 
@@ -81,47 +85,57 @@ class PlainAverageSharing(Sharing):
         """
         pass
 
-    def foolsgold(self,model_updates):
-        keys = list(model_updates.keys())
-        last_layer_updates = model_updates[keys[-2]]
-        K = len(last_layer_updates)
-        cs = smp.cosine_similarity(last_layer_updates.cpu().numpy()) - np.eye(K)
-        maxcs = np.max(cs, axis=1)
-        # === pardoning ===
-        for i in range(K):
-            for j in range(K):
-                if i == j:
-                    continue
-                if maxcs[i] < maxcs[j]:
-                    cs[i][j] = cs[i][j] * maxcs[i] / maxcs[j]
+    def flame(self,trained_params, current_model_param, param_updates,participant_sample_size):
+        # === clustering ===
+        trained_params = torch.stack(trained_params).double()
+        cluster = hdbscan.HDBSCAN(metric="cosine", algorithm="generic",
+                                min_cluster_size=participant_sample_size // 2 + 1,
+                                min_samples=1, allow_single_cluster=True)
+        cluster.fit(trained_params)
+        predict_good = []
+        for i, j in enumerate(cluster.labels_):
+            if j == 0:
+                predict_good.append(i)
+        k = len(predict_good)
 
-        alpha = np.max(cs, axis=1)
-        wv = 1 - alpha
-        wv[wv > 1] = 1
-        wv[wv < 0] = 0
+        # === median clipping ===
+        model_updates = trained_params[predict_good] - current_model_param
+        local_norms = torch.norm(model_updates, dim=1)
+        S_t = torch.median(local_norms)
+        scale = S_t / local_norms
+        scale = torch.where(scale > 1, torch.ones_like(scale), scale)
+        model_updates = model_updates * scale.view(-1, 1)
 
-        # === Rescale so that max value is wv ===
-        wv = wv / np.max(wv)
-        wv[(wv == 1)] = .99
+        # === aggregating ===
+        trained_params = current_model_param + model_updates
+        trained_params = trained_params.sum(dim=0) / k
 
-        # === Logit function ===
-        wv = (np.log(wv / (1 - wv)) + 0.5)
-        wv[(np.isinf(wv) + wv > 1)] = 1
-        wv[(wv < 0)] = 0
-        # === calculate global update ===
-        global_update = defaultdict()
-        for name in keys:
-            tmp = None
-            for i, j in enumerate(range(len(wv))):
-                if i == 0:
-                    tmp = model_updates[name][j] * wv[j]
-                else:
-                    tmp += model_updates[name][j] * wv[j]
-            global_update[name] = 1 / len(wv) * tmp
+        # === noising ===
+        delta = 1 / (participant_sample_size ** 2)
+        epsilon = 10000
+        lambda_ = 1 / epsilon * (math.sqrt(2 * math.log((1.25 / delta))))
+        sigma = lambda_ * S_t.numpy()
+        print(f"sigma: {sigma}; #clean models / clean models: {k} / {predict_good}, median norm: {S_t},")
+        trained_params.add_(torch.normal(0, sigma, size=trained_params.size()))
 
-        return global_update
+        # === bn ===
+        global_update = dict()
+        for i, (name, param) in enumerate(param_updates.items()):
+            if 'num_batches_tracked' in name:
+                global_update[name] = 1 / k * \
+                                    param_updates[name][predict_good].sum(dim=0, keepdim=True)
+            elif 'running_mean' in name or 'running_var' in name:
+                local_norms = torch.norm(param_updates[name][predict_good], dim=1)
+                S_t = torch.median(local_norms)
+                scale = S_t / local_norms
+                scale = torch.where(scale > 1, torch.ones_like(scale), scale)
+                global_update[name] = param_updates[name][predict_good] * scale.view(-1, 1)
+                global_update[name] = 1 / k * global_update[name].sum(dim=0, keepdim=True)
+
+        return trained_params.float().to("cpu"), global_update
+
     
-    def _averaging(self, peer_deques,global_lr):
+    def _averaging(self, peer_deques,global_lr,participant_sample_size):
         """
         Averages the received model with the local model
 
@@ -129,6 +143,7 @@ class PlainAverageSharing(Sharing):
         self.received_this_round = 0
         with torch.no_grad():
             total = dict()
+            train_params = dict()
             weight = 1 / (len(peer_deques) + 1)
             train_data = dict()
             for i, n in enumerate(peer_deques):
@@ -143,6 +158,11 @@ class PlainAverageSharing(Sharing):
                     )
                 )
                 data = self.deserialized_model(data)
+                cli_model = copy.deepcopy(self.model)
+                cli_model.load_state_dict(data)
+                train_param = parameters_to_vector(cli_model.parameters()).detach().cpu()
+                train_params.append(train_param)
+
                 for name, param in data.items():
                     if name not in train_data:
                         train_data[name] = param.data.view(1, -1)
@@ -154,10 +174,13 @@ class PlainAverageSharing(Sharing):
             for (name, param), local_param in zip(self.model.state_dict().items(), train_data.values()):
                 model_updates[name] = local_param.data - param.data.view(1, -1)
             
-            global_update = self.foolsgold(model_updates)
-            
-            for name, param in self.model.state_dict().items():
-                total[name] = param.data + global_lr * global_update[name].view(param.data.shape)
+            current_model_param = parameters_to_vector(self.model.parameters()).detach().cpu()
+            global_param, global_update = self.flame(train_params, current_model_param, model_updates,participant_sample_size)
+            vector_to_parameters(global_param, self.model.parameters())
+            model_param = self.model.state_dict()
+            for name, param in model_param.items():
+                if 'num_batches_tracked' in name or 'running_mean' in name or 'running_var' in name:
+                    model_param[name] = param.data + global_update[name].view(param.size())
             #     for key, value in data.items():
             #         if key in total:
             #             total[key] += value * weight
@@ -167,7 +190,7 @@ class PlainAverageSharing(Sharing):
             # for key, value in self.model.state_dict().items():
             #     total[key] += value * weight
 
-        self.model.load_state_dict(total)
+        self.model.load_state_dict(model_param)
         self._post_step()
         self.communication_round += 1
 

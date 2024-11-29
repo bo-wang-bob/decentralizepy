@@ -166,6 +166,7 @@ class EL_Local(Node):
 
             averaging_deque = dict()  # \theta_{i}^{t + 1/2} for each neighbor i
             atleast_one = False
+            participant_sample_size = 0
             for x in self.my_neighbors:
                 if x in self.peer_deques and len(self.peer_deques[x]) > 0:
                     this_message = self.peer_deques[x][0]
@@ -173,6 +174,7 @@ class EL_Local(Node):
                         this_message["iteration"] == self.iteration
                         and "NotWorking" not in this_message
                     ):
+                        participant_sample_size += 1
                         averaging_deque[x] = self.peer_deques[x]
                         logging.info(
                             f"####### message from {x} of iteration {this_message['iteration']}"
@@ -192,7 +194,7 @@ class EL_Local(Node):
 
             # 这里增加安全聚合机制
             if atleast_one:
-                self.sharing._averaging(averaging_deque,self.lr)
+                self.sharing._averaging(averaging_deque,participant_sample_size)
             else:
                 self.sharing.communication_round += 1
 
