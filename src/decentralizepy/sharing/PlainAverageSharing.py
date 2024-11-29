@@ -96,9 +96,9 @@ class PlainAverageSharing(Sharing):
         nonzero_weights = torch.count_nonzero(weights.flatten())
         nonzero_indices = torch.nonzero(weights.flatten()).flatten()
 
-        print(f'g0_norm: {g0_norm}, '
-            f'weights_sum: {weights.sum()}, '
-            f'*** {nonzero_weights} *** model updates are considered to be aggregated !')
+        # print(f'g0_norm: {g0_norm}, '
+        #     f'weights_sum: {weights.sum()}, '
+        #     f'*** {nonzero_weights} *** model updates are considered to be aggregated !')
 
         normalize_weights = []
         for param_update in param_updates:
@@ -114,7 +114,7 @@ class PlainAverageSharing(Sharing):
                     params * torch.tensor(normalize_weights).to("cpu").view(-1, 1))
         return global_update
     
-    def _averaging(self, peer_deques,global_lr):
+    def _averaging(self, peer_deques,global_lr,iterations):
         """
         Averages the received model with the local model
 
@@ -152,41 +152,41 @@ class PlainAverageSharing(Sharing):
             for (name, param), local_param in zip(self.model.state_dict().items(), train_data.values()):
                 model_updates[name] = local_param.data - param.data.view(1, -1)
 
-            if self.current_round > 500:
-                lr = global_lr * 0.991 ** ((self.current_round - 500) // 5)
-            else:
-                lr = global_lr
-            model = copy.deepcopy(self.model)
-            model.load_state_dict(self.model.state_dict())
-            optimizer = torch.optim.SGD(model.parameters(), lr=lr,
-                                        momentum=0.9,
-                                        weight_decay=5e-4)
-            epochs = 2
-            criterion = torch.nn.CrossEntropyLoss()
-            for _ in range(epochs):
-                for inputs, labels in self.dataset.get_trainset():
-                    inputs, labels = inputs.to("cpu"), labels.to("cpu")
-                    print(inputs, labels)
-                    optimizer.zero_grad()
-                    loss = criterion(model(inputs), labels)
-                    loss.backward()
-                    optimizer.step()
+        if iterations > 500:
+            lr = global_lr * 0.991 ** ((self.current_round - 500) // 5)
+        else:
+            lr = global_lr
+        model = copy.deepcopy(self.model)
+        model.load_state_dict(self.model.state_dict())
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr,
+                                    momentum=0.9,
+                                    weight_decay=5e-4)
+        epochs = 2
+        criterion = torch.nn.CrossEntropyLoss()
+        for _ in range(epochs):
+            for inputs, labels in self.dataset.get_trainset():
+                inputs, labels = inputs.to("cpu"), labels.to("cpu")
+                # print(inputs, labels)
+                optimizer.zero_grad()
+                loss = criterion(model(inputs), labels)
+                loss.backward()
+                optimizer.step()
 
-            clean_param_update = parameters_to_vector(model.parameters()) - parameters_to_vector(
-                self.model.parameters())
+        clean_param_update = parameters_to_vector(model.parameters()) - parameters_to_vector(
+            self.model.parameters())
 
-            global_update = self.fltrust(model_updates, param_updates, clean_param_update)
-            
-            for name, param in self.model.state_dict().items():
-                total[name] = param.data + global_lr * global_update[name].view(param.data.shape)
-            #     for key, value in data.items():
-            #         if key in total:
-            #             total[key] += value * weight
-            #         else:
-            #             total[key] = value * weight
+        global_update = self.fltrust(model_updates, param_updates, clean_param_update)
+        
+        for name, param in self.model.state_dict().items():
+            total[name] = param.data + global_lr * global_update[name].view(param.data.shape)
+        #     for key, value in data.items():
+        #         if key in total:
+        #             total[key] += value * weight
+        #         else:
+        #             total[key] = value * weight
 
-            # for key, value in self.model.state_dict().items():
-            #     total[key] += value * weight
+        # for key, value in self.model.state_dict().items():
+        #     total[key] += value * weight
 
         self.model.load_state_dict(total)
         self._post_step()

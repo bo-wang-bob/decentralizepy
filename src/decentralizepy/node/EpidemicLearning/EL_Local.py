@@ -192,7 +192,7 @@ class EL_Local(Node):
 
             # 这里增加安全聚合机制
             if atleast_one:
-                self.sharing._averaging(averaging_deque,self.lr)
+                self.sharing._averaging(averaging_deque,self.lr,self.iteration)
             else:
                 self.sharing.communication_round += 1
 
