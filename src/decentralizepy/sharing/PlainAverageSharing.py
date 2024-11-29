@@ -5,6 +5,9 @@ import torch
 from collections import defaultdict
 import numpy as np
 import sklearn.metrics.pairwise as smp
+import copy
+import torch.nn.functional as F
+from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from decentralizepy.sharing.Sharing import Sharing
 
 
@@ -81,44 +84,34 @@ class PlainAverageSharing(Sharing):
         """
         pass
 
-    def foolsgold(self,model_updates):
-        keys = list(model_updates.keys())
-        last_layer_updates = model_updates[keys[-2]]
-        K = len(last_layer_updates)
-        cs = smp.cosine_similarity(last_layer_updates.cpu().numpy()) - np.eye(K)
-        maxcs = np.max(cs, axis=1)
-        # === pardoning ===
-        for i in range(K):
-            for j in range(K):
-                if i == j:
-                    continue
-                if maxcs[i] < maxcs[j]:
-                    cs[i][j] = cs[i][j] * maxcs[i] / maxcs[j]
+    def fltrust(self,model_updates, param_updates, clean_param_update):
+        cos = torch.nn.CosineSimilarity(dim=0)
+        g0_norm = torch.norm(clean_param_update)
+        weights = []
+        for param_update in param_updates:
+            weights.append(F.relu(cos(param_update.view(-1, 1), clean_param_update.view(-1, 1))))
+        weights = torch.tensor(weights).to("cpu").view(1, -1)
+        weights = weights / weights.sum()
+        weights = torch.where(weights[0].isnan(), torch.zeros_like(weights), weights)
+        nonzero_weights = torch.count_nonzero(weights.flatten())
+        nonzero_indices = torch.nonzero(weights.flatten()).flatten()
 
-        alpha = np.max(cs, axis=1)
-        wv = 1 - alpha
-        wv[wv > 1] = 1
-        wv[wv < 0] = 0
+        print(f'g0_norm: {g0_norm}, '
+            f'weights_sum: {weights.sum()}, '
+            f'*** {nonzero_weights} *** model updates are considered to be aggregated !')
 
-        # === Rescale so that max value is wv ===
-        wv = wv / np.max(wv)
-        wv[(wv == 1)] = .99
+        normalize_weights = []
+        for param_update in param_updates:
+            normalize_weights.append(g0_norm / torch.norm(param_update))
 
-        # === Logit function ===
-        wv = (np.log(wv / (1 - wv)) + 0.5)
-        wv[(np.isinf(wv) + wv > 1)] = 1
-        wv[(wv < 0)] = 0
-        # === calculate global update ===
-        global_update = defaultdict()
-        for name in keys:
-            tmp = None
-            for i, j in enumerate(range(len(wv))):
-                if i == 0:
-                    tmp = model_updates[name][j] * wv[j]
-                else:
-                    tmp += model_updates[name][j] * wv[j]
-            global_update[name] = 1 / len(wv) * tmp
-
+        global_update = dict()
+        for name, params in model_updates.items():
+            if 'num_batches_tracked' in name or 'running_mean' in name or 'running_var' in name:
+                global_update[name] = 1 / nonzero_weights * params[nonzero_indices].sum(dim=0, keepdim=True)
+            else:
+                global_update[name] = torch.matmul(
+                    weights,
+                    params * torch.tensor(normalize_weights).to("cpu").view(-1, 1))
         return global_update
     
     def _averaging(self, peer_deques,global_lr):
@@ -131,6 +124,7 @@ class PlainAverageSharing(Sharing):
             total = dict()
             weight = 1 / (len(peer_deques) + 1)
             train_data = dict()
+            param_updates = list()
             for i, n in enumerate(peer_deques):
                 self.received_this_round += 1
                 data = peer_deques[n].popleft()
@@ -143,6 +137,9 @@ class PlainAverageSharing(Sharing):
                     )
                 )
                 data = self.deserialized_model(data)
+                trained_local_model = copy.deepcopy(self.model) 
+                trained_local_model.load_state_dict(data)
+                param_updates.append(parameters_to_vector(trained_local_model.parameters()) - parameters_to_vector(self.model.parameters()))
                 for name, param in data.items():
                     if name not in train_data:
                         train_data[name] = param.data.view(1, -1)
@@ -151,10 +148,34 @@ class PlainAverageSharing(Sharing):
                                                         dim=0)
                 
             model_updates = dict()
+            
             for (name, param), local_param in zip(self.model.state_dict().items(), train_data.values()):
                 model_updates[name] = local_param.data - param.data.view(1, -1)
-            
-            global_update = self.foolsgold(model_updates)
+
+            if self.current_round > 500:
+                lr = global_lr * 0.991 ** ((self.current_round - 500) // 5)
+            else:
+                lr = global_lr
+            model = copy.deepcopy(self.model)
+            model.load_state_dict(self.model.state_dict())
+            optimizer = torch.optim.SGD(model.parameters(), lr=lr,
+                                        momentum=0.9,
+                                        weight_decay=5e-4)
+            epochs = 2
+            criterion = torch.nn.CrossEntropyLoss()
+            for _ in range(epochs):
+                for inputs, labels in self.dataset.get_trainset():
+                    inputs, labels = inputs.to("cpu"), labels.to("cpu")
+                    print(inputs, labels)
+                    optimizer.zero_grad()
+                    loss = criterion(model(inputs), labels)
+                    loss.backward()
+                    optimizer.step()
+
+            clean_param_update = parameters_to_vector(model.parameters()) - parameters_to_vector(
+                self.model.parameters())
+
+            global_update = self.fltrust(model_updates, param_updates, clean_param_update)
             
             for name, param in self.model.state_dict().items():
                 total[name] = param.data + global_lr * global_update[name].view(param.data.shape)
