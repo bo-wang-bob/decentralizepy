@@ -121,6 +121,7 @@ class PlainAverageSharing(Sharing):
         """
         self.received_this_round = 0
         with torch.no_grad():
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             total = dict()
             weight = 1 / (len(peer_deques) + 1)
             train_data = dict()
@@ -153,7 +154,7 @@ class PlainAverageSharing(Sharing):
                 model_updates[name] = local_param.data - param.data.view(1, -1)
 
         if iterations > 500:
-            lr = global_lr * 0.991 ** ((self.current_round - 500) // 5)
+            lr = global_lr * 0.991 ** ((iterations - 500) // 5)
         else:
             lr = global_lr
         model = copy.deepcopy(self.model)
@@ -161,18 +162,19 @@ class PlainAverageSharing(Sharing):
         optimizer = torch.optim.SGD(model.parameters(), lr=lr,
                                     momentum=0.9,
                                     weight_decay=5e-4)
+        model = model.to(device)
         epochs = 2
         criterion = torch.nn.CrossEntropyLoss()
         for _ in range(epochs):
             for inputs, labels in self.dataset.get_trainset():
-                inputs, labels = inputs.to("cpu"), labels.to("cpu")
+                inputs, labels = inputs.to(device), labels.to(device)
                 # print(inputs, labels)
                 optimizer.zero_grad()
                 loss = criterion(model(inputs), labels)
                 loss.backward()
                 optimizer.step()
 
-        clean_param_update = parameters_to_vector(model.parameters()) - parameters_to_vector(
+        clean_param_update = parameters_to_vector(model.to("cpu").parameters()) - parameters_to_vector(
             self.model.parameters())
 
         global_update = self.fltrust(model_updates, param_updates, clean_param_update)
