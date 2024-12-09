@@ -259,8 +259,10 @@ class EL_Local(Node):
                 if self.is_malicous:
                     logging.info("Evaluating on poisoned test set.")
                     ta, tl = self.dataset.poisoned_test(self.model, self.loss)
-                    results_dict["poisoned_test_acc"][iteration + 1] = ta
+                    results_dict["poisoned_test_acc"][iteration + 1] = ta/100
                     results_dict["poisoned_test_loss"][iteration + 1] = tl
+                    self.save_plot(results_dict["poisoned_test_acc"],"poisoned_test_acc","Poison Accpetance","Communication Rounds"
+                                   ,os.path.join(self.log_dir,"{}_poison_Acceptance.png".format(self.rank)))
 
                 if global_epoch == 49:
                     change *= 2
