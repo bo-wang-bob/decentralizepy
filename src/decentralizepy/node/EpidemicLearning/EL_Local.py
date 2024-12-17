@@ -99,9 +99,6 @@ class EL_Local(Node):
 
             self.iteration = iteration
 
-            # 记录初始的模型
-            start_model = self.sharing.get_data_to_send()["params"]
-
             do_attack = False
             if self.is_malicous and iteration > (0.8 * self.iterations):
                 do_attack = True
@@ -118,8 +115,8 @@ class EL_Local(Node):
             to_send = self.sharing.get_data_to_send()
             to_send["CHANNEL"] = "DPSGD"
             to_send["iteration"] = self.iteration
-            to_send["start_model"] = start_model
-
+            self.model_history[self.machine_id][self.iteration] = to_send
+            
             # Communication Phase
             for neighbor in neighbors_this_round:
                 logging.debug("Sending to neighbor: %d", neighbor)
@@ -177,10 +174,7 @@ class EL_Local(Node):
                         logging.info(
                             f"####### message from {x} of iteration {this_message['iteration']}"
                         )
-                        self.model_history[x][self.iteration] = (
-                            this_message["start_model"],
-                            this_message["params"],
-                        )
+                        self.model_history[x][self.iteration] = this_message
                         atleast_one = True
                     elif this_message["iteration"] == self.iteration:
                         self.peer_deques[x].popleft()
@@ -192,7 +186,7 @@ class EL_Local(Node):
 
             # 这里增加安全聚合机制
             if atleast_one:
-                self.sharing._averaging(averaging_deque,self.lr)
+                self.sharing._averaging(averaging_deque,self.lr,self.model_history,self.iteration,self.my_neighbors)
             else:
                 self.sharing.communication_round += 1
 

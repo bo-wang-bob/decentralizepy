@@ -1,6 +1,7 @@
 import logging
 
 import torch
+from torch import parameters_to_vector
 
 from collections import defaultdict
 import numpy as np
@@ -80,52 +81,81 @@ class PlainAverageSharing(Sharing):
 
         """
         pass
-
-    def foolsgold(self,model_updates):
-        keys = list(model_updates.keys())
-        last_layer_updates = model_updates[keys[-2]]
-        K = len(last_layer_updates)
-        cs = smp.cosine_similarity(last_layer_updates.cpu().numpy()) - np.eye(K)
-        maxcs = np.max(cs, axis=1)
-        # === pardoning ===
-        for i in range(K):
-            for j in range(K):
-                if i == j:
-                    continue
-                if maxcs[i] < maxcs[j]:
-                    cs[i][j] = cs[i][j] * maxcs[i] / maxcs[j]
-
-        alpha = np.max(cs, axis=1)
-        wv = 1 - alpha
-        wv[wv > 1] = 1
-        wv[wv < 0] = 0
-
-        # === Rescale so that max value is wv ===
-        wv = wv / np.max(wv)
-        wv[(wv == 1)] = .99
-
-        # === Logit function ===
-        wv = (np.log(wv / (1 - wv)) + 0.5)
-        wv[(np.isinf(wv) + wv > 1)] = 1
-        wv[(wv < 0)] = 0
-        # === calculate global update ===
-        global_update = defaultdict()
-        for name in keys:
-            tmp = None
-            for i, j in enumerate(range(len(wv))):
-                if i == 0:
-                    tmp = model_updates[name][j] * wv[j]
-                else:
-                    tmp += model_updates[name][j] * wv[j]
-            global_update[name] = 1 / len(wv) * tmp
-
-        return global_update
     
-    def _averaging(self, peer_deques,global_lr):
+    def distance_calculate(self,k,b,center):
+        """
+        计算点到直线的距离
+        
+        """
+        w=center-b
+        alpha=torch.dot(k,w)/torch.dot(k,k)
+        if alpha>=0:
+            pt=b+alpha*k
+            dis=torch.norm(pt-center)
+        else:
+            dis=torch.norm(w)
+            pt=b
+        return dis,pt
+
+    def superball_calculate(self, model_history,iteration):
+        """
+        模拟退火求覆盖射线集的超球
+        
+        """
+        if(len(model_history)<=1):
+            return -1,-1
+        T = 100
+        tao = 100000
+        TAO_0 = 3e-7
+        ALPHA = 0.999
+        ZETA = 0.9
+        initial_center = torch.zeros_like(model_history[1])
+        num = 0
+        for i in range(max(1,iteration-T+1),iteration):
+            initial_center += model_history[i]
+            num += 1
+        center = initial_center/num
+        dis_list = list()
+        for i in range(max(1,iteration-T+1),iteration):
+            k=model_history[i+1]-model_history[i]
+            b=model_history[i]
+            dis,pt=self.distance_calculate(self,k,b,center)
+            dis_list.append((dis,pt))
+        dis_list.sort(key=lambda x:x[0])
+        radius = dis_list[int(len(dis_list)*ZETA)]
+        while tao > TAO_0:
+            mpt=dis_list[len(dis_list)-1][1]
+            acenter = center + tao*((mpt-center)/torch.norm(mpt-center))
+            dis_list = list()
+            for i in range(max(1,iteration-T+1),iteration):
+                k=model_history[i+1]-model_history[i]
+                b=model_history[i]
+                dis,pt=self.distance_calculate(self,k,b,acenter)
+                dis_list.append((dis,pt))
+            dis_list.sort(key=lambda x:x[0])   
+            aradius = dis_list[int(len(dis_list)*ZETA)]
+            if aradius < radius:
+                center = acenter
+                radius = aradius
+            else:
+                p = np.exp((radius-aradius)/tao)
+                if np.random.rand() < p:
+                    center = acenter
+                    radius = aradius
+            tao *= ALPHA
+        return center,radius
+            
+    def _averaging(self, peer_deques,global_lr,model_history,iteration,my_neighbors):
         """
         Averages the received model with the local model
 
         """
+        for x in model_history:
+            model_history[x][iteration] = parameters_to_vector(self.deserialized_model(model_history[x][iteration])) 
+        with torch.no_grad():
+            for x in my_neighbors:
+                center,radius=self.superball_calculate(self,model_history[x],iteration)
+            
         self.received_this_round = 0
         with torch.no_grad():
             total = dict()
