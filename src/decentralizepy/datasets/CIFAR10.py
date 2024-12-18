@@ -344,9 +344,10 @@ class CIFAR10(Dataset):
         if self.__testing__:
             self.load_testset()
 
-        if poisoned_test_dir and poisoned_train_dir:
+        if poisoned_train_dir:
             self.__poisoning__ = True
-            self.load_poisoned_trainset()
+            self.load_poisoned_trainset()            
+        if poisoned_test_dir:
             self.load_poisoned_testset()
 
     def get_trainset(self, batch_size=1, shuffle=False):
@@ -492,8 +493,8 @@ class CIFAR10(Dataset):
             If the test set was not initialized
 
         """
-        if self.__poisoning__:
-            return DataLoader(self.poisoned_testset, batch_size=self.test_batch_size)
+        # if self.__poisoning__:
+        return DataLoader(self.poisoned_testset, batch_size=self.test_batch_size)
         raise RuntimeError("Poisoned Test set not initialized!")
 
     def get_validationset(self):

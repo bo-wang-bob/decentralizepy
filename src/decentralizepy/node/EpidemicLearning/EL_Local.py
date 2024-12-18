@@ -258,13 +258,13 @@ class EL_Local(Node):
                 results_dict["test_acc"][iteration + 1] = ta
                 results_dict["test_loss"][iteration + 1] = tl
 
-                if self.is_malicous:
-                    logging.info("Evaluating on poisoned test set.")
-                    ta, tl = self.dataset.poisoned_test(self.model, self.loss)
-                    results_dict["poisoned_test_acc"][iteration + 1] = ta/100
-                    results_dict["poisoned_test_loss"][iteration + 1] = tl
-                    self.save_plot(results_dict["poisoned_test_acc"],"poisoned_test_acc","Poison Accpetance","Communication Rounds"
-                                   ,os.path.join(self.log_dir,"{}_poison_Acceptance.png".format(self.rank)))
+                # if self.is_malicous:
+                logging.info("Evaluating on poisoned test set.")
+                ta, tl = self.dataset.poisoned_test(self.model, self.loss)
+                results_dict["poisoned_test_acc"][iteration + 1] = ta/100
+                results_dict["poisoned_test_loss"][iteration + 1] = tl
+                self.save_plot(results_dict["poisoned_test_acc"],"poisoned_test_acc","Poison Accpetance","Communication Rounds"
+                                ,os.path.join(self.log_dir,"{}_poison_Acceptance.png".format(self.rank)))
 
                 if global_epoch == 49:
                     change *= 2
@@ -421,15 +421,15 @@ class EL_Local(Node):
             reset_optimizer,
         )
 
-        # reset the poisoned_train_dir & poisoned_test_dir if not malicious
-        if not self.is_malicous:
-            config["DATASET"]["poisoned_train_dir"] = ""
-            config["DATASET"]["poisoned_test_dir"] = ""
-        else:
-            config["DATASET"]["attack_method"] = self.attack_method
-            config["DATASET"]["gradmask_ratio"] = self.gradmask_ratio
-            config["TRAIN_PARAMS"]["attack_method"] = self.attack_method
-            config["TRAIN_PARAMS"]["gradmask_ratio"] = self.gradmask_ratio
+        # # reset the poisoned_train_dir & poisoned_test_dir if not malicious
+        # if not self.is_malicous:
+        #     config["DATASET"]["poisoned_train_dir"] = ""
+        #     # config["DATASET"]["poisoned_test_dir"] = ""
+        # else:
+        config["DATASET"]["attack_method"] = self.attack_method
+        config["DATASET"]["gradmask_ratio"] = self.gradmask_ratio
+        config["TRAIN_PARAMS"]["attack_method"] = self.attack_method
+        config["TRAIN_PARAMS"]["gradmask_ratio"] = self.gradmask_ratio
 
         self.init_dataset_model(config["DATASET"])
         self.init_optimizer(config["OPTIMIZER_PARAMS"])
