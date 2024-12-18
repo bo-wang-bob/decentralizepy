@@ -448,8 +448,8 @@ class CIFAR10(Dataset):
             If the test set was not initialized
 
         """
-        if self.__testing__:
-            return DataLoader(self.testset, batch_size=self.test_batch_size)
+        # if self.__testing__:
+        return DataLoader(self.testset, batch_size=self.test_batch_size)
         raise RuntimeError("Test set not initialized!")
 
     def get_poisoned_trainset(self, batch_size=1, shuffle=False):

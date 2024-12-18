@@ -100,6 +100,8 @@ if __name__ == "__main__":
                         args.train_evaluate_after,
                         args.reset_optimizer,
                         False,
+                        attack_method,
+                        gradmask_ratio,
                     ],
                 )
             )
