@@ -86,6 +86,10 @@ class EL_Local(Node):
         self.rng.seed(self.dataset.random_seed + self.uid)
 
         self.connect_neighbors()
+        def insert_model_history(model_history:dict,id,iteration,x):
+            if id not in model_history.keys():
+                model_history[id]=dict()
+            model_history[id][iteration]=x
 
         logging.info("Connected to all neighbors")
         logging.info("Total number of neighbor: {}".format(len(self.my_neighbors)))
@@ -98,7 +102,7 @@ class EL_Local(Node):
             rounds_to_test -= 1
 
             self.iteration = iteration
-
+            
             do_attack = False
             if self.is_malicous and iteration > (0.8 * self.iterations):
                 do_attack = True
@@ -115,23 +119,24 @@ class EL_Local(Node):
             to_send = self.sharing.get_data_to_send()
             to_send["CHANNEL"] = "DPSGD"
             to_send["iteration"] = self.iteration
-            self.model_history[self.machine_id][self.iteration] = to_send
+            insert_model_history(self.model_history,self.machine_id,self.iteration,to_send)
+            # self.model_history[self.machine_id][self.iteration] = to_send
             
             # Communication Phase
-            for neighbor in neighbors_this_round:
+            for neighbor in self.my_neighbors:
                 logging.debug("Sending to neighbor: %d", neighbor)
                 self.communication.send(neighbor, to_send)
 
-            for x in self.my_neighbors:
-                if x not in neighbors_this_round:
-                    self.communication.send(
-                        x,
-                        {
-                            "CHANNEL": "DPSGD",
-                            "iteration": self.iteration,
-                            "NotWorking": True,
-                        },
-                    )
+            # for x in self.my_neighbors:
+            #     if x not in neighbors_this_round:
+            #         self.communication.send(
+            #             x,
+            #             {
+            #                 "CHANNEL": "DPSGD",
+            #                 "iteration": self.iteration,
+            #                 "NotWorking": True,
+            #             },
+            #         )
 
             while not self.received_from_all():
                 response = self.receive_DPSGD()
@@ -174,7 +179,8 @@ class EL_Local(Node):
                         logging.info(
                             f"####### message from {x} of iteration {this_message['iteration']}"
                         )
-                        self.model_history[x][self.iteration] = this_message
+                        insert_model_history(self.model_history,x,self.iteration,this_message)
+                        # self.model_history[x][self.iteration] = this_message
                         atleast_one = True
                     elif this_message["iteration"] == self.iteration:
                         self.peer_deques[x].popleft()
@@ -431,8 +437,8 @@ class EL_Local(Node):
         self.barrier = set()
         self.my_neighbors = self.graph.neighbors(self.uid)
 
-        for neighbor in self.my_neighbors:
-            self.model_history[neighbor] = dict()
+        # for neighbor in self.my_neighbors:
+        #     self.model_history[neighbor] = dict()
 
         self.init_sharing(config["SHARING"])
         self.peer_deques = dict()
@@ -507,7 +513,7 @@ class EL_Local(Node):
         self.gradmask_ratio = gradmask_ratio
         self.lr = config["OPTIMIZER_PARAMS"]["lr"]
         # 记录邻居的历史信息 neighbor_name -> {iteration -> {theta, grad}}
-        self.model_history = dict()
+        self.model_history= dict()
 
         logging.info("Malicious: {}".format(self.is_malicous))
         total_threads = os.cpu_count()

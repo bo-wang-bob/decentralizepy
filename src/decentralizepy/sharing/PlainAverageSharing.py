@@ -1,7 +1,8 @@
 import logging
 
 import torch
-from torch import parameters_to_vector
+from torch.nn.utils import parameters_to_vector
+import copy
 
 from collections import defaultdict
 import numpy as np
@@ -116,24 +117,26 @@ class PlainAverageSharing(Sharing):
             num += 1
         center = initial_center/num
         dis_list = list()
-        for i in range(max(1,iteration-T+1),iteration):
+        # logging.info("max(1,iteration-T+1):{},iteration:{}".format(max(1,iteration-T+1),iteration))
+        for i in range(max(1,iteration-T+1)-1,iteration):
             k=model_history[i+1]-model_history[i]
             b=model_history[i]
-            dis,pt=self.distance_calculate(self,k,b,center)
+            dis,pt=self.distance_calculate(k,b,center)
             dis_list.append((dis,pt))
         dis_list.sort(key=lambda x:x[0])
-        radius = dis_list[int(len(dis_list)*ZETA)]
+        logging.info("len(dis_list):{},int(len(dis_list)*ZETA):{}".format(len(dis_list),int(len(dis_list)*ZETA)))
+        radius = dis_list[int(len(dis_list)*ZETA)][0]
         while tao > TAO_0:
             mpt=dis_list[len(dis_list)-1][1]
             acenter = center + tao*((mpt-center)/torch.norm(mpt-center))
             dis_list = list()
-            for i in range(max(1,iteration-T+1),iteration):
+            for i in range(max(1,iteration-T+1)-1,iteration):
                 k=model_history[i+1]-model_history[i]
                 b=model_history[i]
-                dis,pt=self.distance_calculate(self,k,b,acenter)
+                dis,pt=self.distance_calculate(k,b,acenter)
                 dis_list.append((dis,pt))
             dis_list.sort(key=lambda x:x[0])   
-            aradius = dis_list[int(len(dis_list)*ZETA)]
+            aradius = dis_list[int(len(dis_list)*ZETA)][0]
             if aradius < radius:
                 center = acenter
                 radius = aradius
@@ -183,22 +186,28 @@ class PlainAverageSharing(Sharing):
         A = 0.5 
         centers,radiuss = dict(),dict()
         for x in model_history:
-            model_history[x][iteration] = parameters_to_vector(self.deserialized_model(model_history[x][iteration])) 
+            # logging.info("iteration:{},x:{},model_history:{}".format(iteration,x,model_history))
+            n_model=copy.deepcopy(self.model)
+            n_model.load_state_dict(self.deserialized_model(model_history[x][iteration]))
+            model_history[x][iteration] = parameters_to_vector(n_model.parameters()) 
         with torch.no_grad():
-            center,radius=self.superball_calculate(self,model_history[self.machine_id],iteration)
+            center,radius=self.superball_calculate(model_history[self.machine_id],iteration)
             centers[self.machine_id] = center
             radiuss[self.machine_id] = radius
             for x in my_neighbors:
-                centerx,radiusx=self.superball_calculate(self,model_history[x],iteration)
+                centerx,radiusx=self.superball_calculate(model_history[x],iteration)
                 centers[x] = centerx
                 radiuss[x] = radiusx
 
             reps = dict()
             for x in my_neighbors:
-                Sim_x = self.calculate_similarity(self,centers[self.machine_id],centers[x],model_history[self.machine_id],iteration)
-                bx,dx,ux=self.rep_evaluation(self,Sim_x,radiuss[self.machine_id],radiuss[x],max(radiuss.values()),min(radiuss.values()))
-                repx=bx+A*ux
-                reps[x] = repx
+                if type(centers[x]) is int and centers[x] == -1 and radiuss[x] == -1:
+                    reps[x] = -1
+                else:
+                    Sim_x = self.calculate_similarity(centers[self.machine_id],centers[x],model_history[self.machine_id],iteration)
+                    bx,dx,ux=self.rep_evaluation(Sim_x,radiuss[self.machine_id],radiuss[x],max(radiuss.values()),min(radiuss.values()))
+                    repx=bx+A*ux
+                    reps[x] = repx
 
         ITA = 0.8
         self.received_this_round = 0
@@ -234,7 +243,10 @@ class PlainAverageSharing(Sharing):
                     logging.info("Neighbor {} is not in Agg".format(n))
 
             for key, value in self.model.state_dict().items():
-                total[key] += value * Agg[self.machine_id]/sums
+                if key in total.keys():
+                    total[key] += value * Agg[self.machine_id]/sums
+                else:
+                    total[key] = value * Agg[self.machine_id]/sums
 
         self.model.load_state_dict(total)
         self._post_step()
