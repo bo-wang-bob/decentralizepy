@@ -2,7 +2,7 @@ import logging
 
 import torch
 from torch.nn.utils import parameters_to_vector
-import copy
+import copy,math
 
 from collections import defaultdict
 import numpy as np
@@ -106,13 +106,13 @@ class PlainAverageSharing(Sharing):
         if(len(model_history)<=1):
             return -1,-1
         T = 30
-        tao = 100000
+        tao = 100 #10000
         TAO_0 = 3e-7
         ALPHA = 0.999
         ZETA = 0.9
         initial_center = torch.zeros_like(model_history[1])
         num = 0
-        for i in range(max(1,iteration-T+1),iteration):
+        for i in range(max(1,iteration-T+1)-1,iteration):
             initial_center += model_history[i]
             num += 1
         center = initial_center/num
@@ -122,11 +122,13 @@ class PlainAverageSharing(Sharing):
             k=model_history[i+1]-model_history[i]
             b=model_history[i]
             dis,pt=self.distance_calculate(k,b,center)
+            # logging.info("---dis:{},pt:{},center:{}".format(dis,pt,center))
             dis_list.append((dis,pt))
         dis_list.sort(key=lambda x:x[0])
-        logging.info("len(dis_list):{},int(len(dis_list)*ZETA):{}".format(len(dis_list),int(len(dis_list)*ZETA)))
+        # logging.info("len(dis_list):{},int(len(dis_list)*ZETA):{}".format(len(dis_list),int(len(dis_list)*ZETA)))
         radius = dis_list[int(len(dis_list)*ZETA)][0]
         while tao > TAO_0:
+            # logging.info("---center:{},radius:{}".format(center,radius))
             mpt=dis_list[len(dis_list)-1][1]
             acenter = center + tao*((mpt-center)/torch.norm(mpt-center))
             dis_list = list()
@@ -141,8 +143,8 @@ class PlainAverageSharing(Sharing):
                 center = acenter
                 radius = aradius
             else:
-                p = np.exp((radius-aradius)/tao)
-                if np.random.rand() < p:
+                p = torch.exp((radius-aradius)/tao)
+                if torch.rand(1).item() < p.item():
                     center = acenter
                     radius = aradius
             tao *= ALPHA
@@ -152,30 +154,32 @@ class PlainAverageSharing(Sharing):
         T = 30
         GAMA = 0.9
 
-        g_i=np.zeros_like(model_history[1])
-        for i in range(max(1,iteration-T+1),iteration):
-            g_i += np.exp(-GAMA*(iteration-1-i))*(model_history[i+1]-model_history[i])
+        g_i=torch.zeros_like(model_history[1])
+        for i in range(max(1,iteration-T+1)-1,iteration):
+            g_i += math.exp(-GAMA*(iteration-1-i))*(model_history[i+1]-model_history[i])
         
         O_ik = centerx - center
-        if np.dot(g_i,O_ik) > 0:
+        if torch.dot(g_i,O_ik) > 0:
             Sim = 1
-        elif np.dot(g_i,O_ik) == 0:
+        elif torch.abs(torch.dot(g_i,O_ik)) < 1e-8:
             Sim = 0
         else:
             Sim = -1
         
-        Sim *= 1/(1+O_ik.norm())
+        Sim *= 1/(1+O_ik.norm().item())
         return Sim
     
     def rep_evaluation(self,Sim_x,radius,radiusx,max_radius,min_radius):
         B = 0.5
         C = 0.5
 
+        logging.info("{},{},{},{},{},{}".format(type(Sim_x),Sim_x,radius,radiusx,max_radius,min_radius))
         pi = (Sim_x + 1)/2
         ni = (1 - Sim_x)/2
-        ux = 1/(1+np.exp(-(radius+radiusx-2*min_radius)/(max_radius-min_radius)))
+        ux = 1/(1+torch.exp(-(radius+radiusx-2*min_radius)/(max_radius-min_radius+1e-8)))
         bx = (1-ux)*(B*pi/(B*pi+C*ni))
         dx = (1-ux)*(C*ni/(B*pi+C*ni))
+        logging.info("ux:{},bx:{},dx:{}".format(ux,bx,dx))
         return bx,dx,ux
     
     def _averaging(self, peer_deques,global_lr,model_history,iteration,my_neighbors):
@@ -189,13 +193,15 @@ class PlainAverageSharing(Sharing):
             # logging.info("iteration:{},x:{},model_history:{}".format(iteration,x,model_history))
             n_model=copy.deepcopy(self.model)
             n_model.load_state_dict(self.deserialized_model(model_history[x][iteration]))
-            model_history[x][iteration] = parameters_to_vector(n_model.parameters()) 
+            model_history[x][iteration] = parameters_to_vector(n_model.parameters())
         with torch.no_grad():
             center,radius=self.superball_calculate(model_history[self.machine_id],iteration)
+            logging.info("me,center:{},radius:{}".format(center,radius))
             centers[self.machine_id] = center
             radiuss[self.machine_id] = radius
             for x in my_neighbors:
                 centerx,radiusx=self.superball_calculate(model_history[x],iteration)
+                logging.info("x:{},center:{},radius:{}".format(x,centerx,radiusx))
                 centers[x] = centerx
                 radiuss[x] = radiusx
 
@@ -204,10 +210,13 @@ class PlainAverageSharing(Sharing):
                 if type(centers[x]) is int and centers[x] == -1 and radiuss[x] == -1:
                     reps[x] = -1
                 else:
+                    # logging.info("centers:{},radiuss:{}".format(centers,radiuss))
                     Sim_x = self.calculate_similarity(centers[self.machine_id],centers[x],model_history[self.machine_id],iteration)
                     bx,dx,ux=self.rep_evaluation(Sim_x,radiuss[self.machine_id],radiuss[x],max(radiuss.values()),min(radiuss.values()))
                     repx=bx+A*ux
                     reps[x] = repx
+                    logging.info("Sim_x:{}".format(Sim_x))
+                logging.info("reps[x]:{}".format(reps[x]))
 
         ITA = 0.8
         self.received_this_round = 0
