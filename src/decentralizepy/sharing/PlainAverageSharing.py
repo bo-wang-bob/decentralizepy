@@ -195,11 +195,12 @@ class PlainAverageSharing(Sharing):
                 n_model=copy.deepcopy(self.model)
                 n_model.load_state_dict(self.deserialized_model(model_history[x][iteration]))
                 model_history[x][iteration] = parameters_to_vector(n_model.parameters()).to("cuda")
+                logging.info("model_history[{}]:{}".format(x,model_history[x]))
         
-            center,radius=self.superball_calculate(model_history[self.machine_id],iteration)
-            logging.info("me,center:{},radius:{}".format(center,radius))
-            centers[self.machine_id] = center
-            radiuss[self.machine_id] = radius
+            center,radius=self.superball_calculate(model_history[self.rank],iteration)
+            logging.info("me:{},center:{},radius:{}".format(self.rank,center,radius))
+            centers[self.rank] = center
+            radiuss[self.rank] = radius
             for x in my_neighbors:
                 centerx,radiusx=self.superball_calculate(model_history[x],iteration)
                 logging.info("x:{},center:{},radius:{}".format(x,centerx,radiusx))
@@ -212,12 +213,12 @@ class PlainAverageSharing(Sharing):
                     reps[x] = -1
                 else:
                     # logging.info("centers:{},radiuss:{}".format(centers,radiuss))
-                    Sim_x = self.calculate_similarity(centers[self.machine_id],centers[x],model_history[self.machine_id],iteration)
+                    Sim_x = self.calculate_similarity(centers[self.rank],centers[x],model_history[self.rank],iteration)
                     stacked_radius_tensors=torch.stack(list(radiuss.values()))
                     max_radius=torch.max(stacked_radius_tensors)
                     min_radius=torch.min(stacked_radius_tensors)
                     logging.info("max_radius:{},min_radius:{}".format(max_radius,min_radius))
-                    bx,dx,ux=self.rep_evaluation(Sim_x,radiuss[self.machine_id],radiuss[x],max_radius,min_radius)
+                    bx,dx,ux=self.rep_evaluation(Sim_x,radiuss[self.rank],radiuss[x],max_radius,min_radius)
                     repx=bx+A*ux
                     reps[x] = repx
                     logging.info("Sim_x:{}".format(Sim_x))
@@ -227,7 +228,7 @@ class PlainAverageSharing(Sharing):
         self.received_this_round = 0
         with torch.no_grad():
             Agg = dict()
-            Agg[self.machine_id] = 1
+            Agg[self.rank] = 1
             for x in reps:
                 if reps[x] > ITA:
                     Agg[x] = reps[x]
@@ -258,9 +259,9 @@ class PlainAverageSharing(Sharing):
 
             for key, value in self.model.state_dict().items():
                 if key in total.keys():
-                    total[key] += value * Agg[self.machine_id]/sums
+                    total[key] += value * Agg[self.rank]/sums
                 else:
-                    total[key] = value * Agg[self.machine_id]/sums
+                    total[key] = value * Agg[self.rank]/sums
 
         self.model.load_state_dict(total)
         self._post_step()
