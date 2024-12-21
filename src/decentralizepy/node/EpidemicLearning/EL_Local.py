@@ -119,7 +119,8 @@ class EL_Local(Node):
             to_send = self.sharing.get_data_to_send()
             to_send["CHANNEL"] = "DPSGD"
             to_send["iteration"] = self.iteration
-            insert_model_history(self.model_history,self.machine_id,self.iteration,to_send)
+            logging.info("rank:{}".format(self.rank))
+            insert_model_history(self.model_history,self.rank,self.iteration,to_send)
             # self.model_history[self.machine_id][self.iteration] = to_send
             
             # Communication Phase
