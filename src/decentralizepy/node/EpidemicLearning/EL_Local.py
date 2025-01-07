@@ -104,7 +104,7 @@ class EL_Local(Node):
             self.iteration = iteration
             
             do_attack = False
-            if self.is_malicous and iteration > (0.8 * self.iterations):
+            if self.is_malicous and iteration > (0.95 * self.iterations):
                 do_attack = True
 
             self.trainer.train(self.dataset, do_attack)  # Train the model
@@ -193,7 +193,7 @@ class EL_Local(Node):
 
             # 这里增加安全聚合机制
             if atleast_one:
-                self.sharing._averaging(averaging_deque,self.lr,self.model_history,self.iteration,self.my_neighbors)
+                self.sharing._averaging(averaging_deque,self.lr,self.model_history,self.iteration,self.iterations,self.my_neighbors)
             else:
                 self.sharing.communication_round += 1
 

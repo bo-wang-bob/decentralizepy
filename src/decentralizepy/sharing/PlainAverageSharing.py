@@ -103,9 +103,9 @@ class PlainAverageSharing(Sharing):
         模拟退火求覆盖射线集的超球
         
         """
-        if(len(model_history)<=1):
-            return -1,-1
-        T = 30
+        if(len(model_history)==1):
+            return model_history[0],torch.tensor(0.0)
+        T = 5
         tao = 100 #10000
         TAO_0 = 1e-6
         ALPHA = 0.98
@@ -150,24 +150,24 @@ class PlainAverageSharing(Sharing):
             tao *= ALPHA
         return center,radius
     
-    def calculate_similarity(self,center,centerx,model_history,iteration):
-        T = 30
-        GAMA = 0.9
+    # def calculate_similarity(self,center,centerx,model_history,iteration):
+    #     T = 30
+    #     GAMA = 0.9
 
-        g_i=torch.zeros_like(model_history[1])
-        for i in range(max(1,iteration-T+1)-1,iteration):
-            g_i += math.exp(-GAMA*(iteration-1-i))*(model_history[i+1]-model_history[i])
+    #     g_i=torch.zeros_like(model_history[1])
+    #     for i in range(max(1,iteration-T+1)-1,iteration):
+    #         g_i += math.exp(-GAMA*(iteration-1-i))*(model_history[i+1]-model_history[i])
         
-        O_ik = centerx - center
-        if torch.dot(g_i,O_ik) > 0:
-            Sim = 1
-        elif torch.abs(torch.dot(g_i,O_ik)) < 1e-8:
-            Sim = 0
-        else:
-            Sim = -1
+    #     O_ik = centerx - center
+    #     if torch.dot(g_i,O_ik) > 0:
+    #         Sim = 1
+    #     elif torch.abs(torch.dot(g_i,O_ik)) < 1e-8:
+    #         Sim = 0
+    #     else:
+    #         Sim = -1
         
-        Sim *= 1/(1+O_ik.norm().item())
-        return Sim
+    #     Sim *= 1/(1+O_ik.norm().item())
+    #     return Sim
     
     def rep_evaluation(self,Sim_x,radius,radiusx,max_radius,min_radius):
         B = 0.5
@@ -179,10 +179,10 @@ class PlainAverageSharing(Sharing):
         ux = 1/(1+torch.exp(-(radius+radiusx-2*min_radius)/(max_radius-min_radius+1e-8)).item())
         bx = (1-ux)*(B*pi/(B*pi+C*ni))
         dx = (1-ux)*(C*ni/(B*pi+C*ni))
-        # logging.info("ux:{},bx:{},dx:{}".format(ux,bx,dx))
+        logging.info("ux:{},bx:{},dx:{}".format(ux,bx,dx))
         return bx,dx,ux
     
-    def _averaging(self, peer_deques,global_lr,model_history,iteration,my_neighbors):
+    def _averaging(self, peer_deques,global_lr,model_history,iteration,iterations,my_neighbors):
         """
         Averages the received model with the local model
 
@@ -195,25 +195,40 @@ class PlainAverageSharing(Sharing):
                 n_model=copy.deepcopy(self.model)
                 n_model.load_state_dict(self.deserialized_model(model_history[x][iteration]))
                 model_history[x][iteration] = parameters_to_vector(n_model.parameters()).to("cuda")
-                logging.info("model_history[{}]:{}".format(x,model_history[x]))
-        
-            center,radius=self.superball_calculate(model_history[self.rank],iteration)
-            logging.info("me:{},center:{},radius:{}".format(self.rank,center,radius))
-            centers[self.rank] = center
-            radiuss[self.rank] = radius
-            for x in my_neighbors:
-                centerx,radiusx=self.superball_calculate(model_history[x],iteration)
-                logging.info("x:{},center:{},radius:{}".format(x,centerx,radiusx))
-                centers[x] = centerx
-                radiuss[x] = radiusx
+                # logging.info("model_history[{}]:{}".format(x,model_history[x]))
+            if iteration>=0.95*iterations:
+                center,radius=self.superball_calculate(model_history[self.rank],iteration)
+                logging.info("me:{},center:{},radius:{}".format(self.rank,center,radius))
+                centers[self.rank] = center
+                radiuss[self.rank] = radius
+                for x in my_neighbors:
+                    centerx,radiusx=self.superball_calculate(model_history[x],iteration)
+                    logging.info("x:{},center:{},radius:{}".format(x,centerx,radiusx))
+                    centers[x] = centerx
+                    radiuss[x] = radiusx
+
+                O_iks=dict()
+                for x in my_neighbors:
+                    if not(type(centers[x]) is int and centers[x] == -1 and radiuss[x] == -1):
+                        O_ik=centers[x]-centers[self.rank]
+                        O_iks[x]=O_ik.norm().item()
+
+                logging.info("O_iks:{}".format(O_iks))
+                if len(O_iks)>0:
+                    O_ikmin=min(O_iks.values())
+                    for k in O_iks:
+                        O_iks[k]/=O_ikmin
+                logging.info("O_iks:{}".format(O_iks))
 
             reps = dict()
             for x in my_neighbors:
-                if type(centers[x]) is int and centers[x] == -1 and radiuss[x] == -1:
-                    reps[x] = -1
-                else:
+                # if type(centers[x]) is int and centers[x] == -1 and radiuss[x] == -1:
+                #     reps[x] = -1
+                # else:
                     # logging.info("centers:{},radiuss:{}".format(centers,radiuss))
-                    Sim_x = self.calculate_similarity(centers[self.rank],centers[x],model_history[self.rank],iteration)
+                    # Sim_x = self.calculate_similarity(centers[self.rank],centers[x],model_history[self.rank],iteration)
+                if iteration>=0.95*iterations:
+                    Sim_x=1/O_iks[x]
                     stacked_radius_tensors=torch.stack(list(radiuss.values()))
                     max_radius=torch.max(stacked_radius_tensors)
                     min_radius=torch.min(stacked_radius_tensors)
@@ -222,16 +237,19 @@ class PlainAverageSharing(Sharing):
                     repx=bx+A*ux
                     reps[x] = repx
                     logging.info("Sim_x:{}".format(Sim_x))
-                logging.info("reps[x]:{},{}".format(reps[x],type(reps[x])))
+                    logging.info("reps[x]:{},{}".format(reps[x],type(reps[x])))
+                else:
+                    reps[x]=1
 
-        ITA = 0.8
+        ITA = 0.65
         self.received_this_round = 0
         with torch.no_grad():
             Agg = dict()
             Agg[self.rank] = 1
             for x in reps:
-                if reps[x] > ITA:
-                    Agg[x] = reps[x]
+                # if reps[x] > ITA:
+                # Agg[x] = reps[x]
+                Agg[x]=1
             
             total = dict()
             sums = sum(Agg.values())
@@ -263,7 +281,8 @@ class PlainAverageSharing(Sharing):
                 else:
                     total[key] = value * Agg[self.rank]/sums
 
-        self.model.load_state_dict(total)
+        if len(total)>0:
+            self.model.load_state_dict(total)
         self._post_step()
         self.communication_round += 1
 
