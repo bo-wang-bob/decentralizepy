@@ -75,6 +75,18 @@ class Training:
         self.attack_method = attack_method
         self.gradmask_ratio = gradmask_ratio
 
+        if torch.cuda.is_available():
+            num_gpus = torch.cuda.device_count()
+            if num_gpus == 1:
+                self.device = torch.device("cuda:0")  # 只有 1 个 GPU，使用 0 号 GPU
+            else:     
+                if self.rank % 2 == 1:
+                    self.device = torch.device("cuda:0")  # 使用 0 号 GPU
+                else:
+                    self.device = torch.device("cuda:1")  # 使用 1 号 GPU
+        else:
+            self.device = torch.device("cpu")
+
     def reset_optimizer(self, optimizer):
         """
         Replace the current optimizer with a new one
@@ -149,6 +161,7 @@ class Training:
             epoch_loss = 0.0
             count = 0
             for data, target in trainset:
+                data, target = data.to(self.device), target.to(self.device)
                 logging.debug(
                     "Starting minibatch {} with num_samples: {}".format(
                         count, len(data)
@@ -170,6 +183,7 @@ class Training:
 
         """
         self.model.train()
+
         logging.info("do_attack: {}".format(do_attack))
         if not do_attack:
             if self.full_epochs:
@@ -180,6 +194,7 @@ class Training:
                 trainset = dataset.get_trainset(self.batch_size, self.shuffle)
                 while count < self.rounds:
                     for data, target in trainset:
+                        data, target = data.to(self.device), target.to(self.device)
                         iter_loss += self.trainstep(data, target)
                         count += 1
                         logging.debug(
@@ -199,6 +214,7 @@ class Training:
                 model_under_neurotoxin.train()
                 model_under_neurotoxin.zero_grad()
                 for data, target in cleanset_under_neurotoxin:
+                    data, target = data.to(self.device), target.to(self.device)
                     output = model_under_neurotoxin(data)
                     loss_val = self.loss(output, target)
                     loss_val.backward()
@@ -264,6 +280,7 @@ class Training:
 
                     data = torch.cat((data, poison_data))
                     target = torch.cat((target, poison_target))
+                    data, target = data.to(self.device), target.to(self.device)
                     self.model.zero_grad()
                     output = self.model(data)
                     loss_val = self.loss(output, target)

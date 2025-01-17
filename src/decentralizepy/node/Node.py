@@ -3,9 +3,12 @@ import logging
 import math
 import os
 from collections import deque
-
+import torchvision.models as models
 import numpy as np
 import torch
+
+from torchvision.models import ResNet18_Weights
+
 
 from decentralizepy import utils
 from decentralizepy.graphs.Graph import Graph
@@ -25,7 +28,7 @@ class Node:
         """
         logging.debug("Sending connection request to {}".format(neighbor))
         self.communication.init_connection(neighbor)
-        self.communication.send(neighbor, {"HELLO": self.uid, "CHANNEL": "CONNECT"})
+        self.communication.send(neighbor, ({"HELLO": self.uid, "CHANNEL": "CONNECT"},0))
 
     def receive_channel(self, channel, block=True):
         if channel not in self.message_queue:
@@ -42,14 +45,14 @@ class Node:
 
             logging.debug(
                 "Received some message from {} with CHANNEL: {}".format(
-                    sender, recv["CHANNEL"]
+                    sender, recv[0]["CHANNEL"]
                 )
             )
-            assert "CHANNEL" in recv
-            while recv["CHANNEL"] != channel:
-                if recv["CHANNEL"] not in self.message_queue:
-                    self.message_queue[recv["CHANNEL"]] = deque()
-                self.message_queue[recv["CHANNEL"]].append((sender, recv))
+            assert "CHANNEL" in recv[0]
+            while recv[0]["CHANNEL"] != channel:
+                if recv[0]["CHANNEL"] not in self.message_queue:
+                    self.message_queue[recv[0]["CHANNEL"]] = deque()
+                self.message_queue[recv[0]["CHANNEL"]].append((sender, recv))
                 x = self.communication.receive(block=block)
                 if x == None:
                     assert not block
@@ -57,7 +60,7 @@ class Node:
                 sender, recv = x
                 logging.debug(
                     "Received some message from {} with CHANNEL: {}".format(
-                        sender, recv["CHANNEL"]
+                        sender, recv[0]["CHANNEL"]
                     )
                 )
             return (sender, recv)
@@ -118,7 +121,7 @@ class Node:
         if not self.sent_disconnections:
             logging.info("Disconnecting neighbors")
             for uid in self.barrier:
-                self.communication.send(uid, {"BYE": self.uid, "CHANNEL": "DISCONNECT"})
+                self.communication.send(uid, ({"BYE": self.uid, "CHANNEL": "DISCONNECT"},0))
             self.sent_disconnections = True
             while len(self.barrier):
                 sender, _ = self.receive_disconnect()
@@ -220,8 +223,23 @@ class Node:
 
         logging.info("Dataset instantiation complete.")
 
-        self.model_class = getattr(dataset_module, dataset_configs["model_class"])
-        self.model = self.model_class()
+        if torch.cuda.is_available():
+            num_gpus = torch.cuda.device_count()
+            if num_gpus == 1:
+                self.device = torch.device("cuda:0")  # 只有 1 个 GPU，使用 0 号 GPU
+            else:     
+                if self.rank % 2 == 1:
+                    self.device = torch.device("cuda:0")  # 使用 0 号 GPU
+                else:
+                    self.device = torch.device("cuda:1")  # 使用 1 号 GPU
+        else:
+            self.device = torch.device("cpu")
+
+        if dataset_configs["model_class"] != "ResNet18":
+            self.model_class = getattr(dataset_module, dataset_configs["model_class"])
+            self.model = self.model_class().to(self.device)
+        else:
+            self.model = models.resnet18(weights=ResNet18_Weights.DEFAULT).to(self.device)
 
     def init_optimizer(self, optimizer_configs):
         """

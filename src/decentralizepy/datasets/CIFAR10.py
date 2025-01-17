@@ -12,6 +12,7 @@ import random
 from decentralizepy.datasets.Dataset import Dataset
 from decentralizepy.datasets.Partitioner import (
     DataPartitioner,
+    Partition,
     DirichletDataPartitioner,
     KShardDataPartitioner,
     SimpleDataPartitioner,
@@ -75,6 +76,7 @@ class CIFAR10(Dataset):
             logging.debug("Size fractions: {}".format(self.sizes))
         if not self.partition_niid or self.partition_niid == "iid":
             # IID partitioning
+            # self.trainset = Partition(trainset,[x for x in range(len(trainset))])
             self.trainset = DataPartitioner(
                 trainset, sizes=self.sizes, seed=self.random_seed
             ).use(self.dataset_id)
@@ -325,10 +327,14 @@ class CIFAR10(Dataset):
         self.partition_niid = partition_niid
         self.alpha = alpha
         self.shards = shards
+
+        # ResNet
         self.transform = transforms.Compose(
             [
                 transforms.ToTensor(),
-                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                transforms.Normalize(
+                    mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]
+                ),
             ]
         )
         # attack config
@@ -431,7 +437,7 @@ class CIFAR10(Dataset):
                 self.base_trainset, total_idx
             )
             return DataLoader(
-                trainset_under_attack, batch_size=batch_size, shuffle=shuffle
+                self.poisoned_trainset, batch_size=batch_size, shuffle=shuffle
             )
 
     def get_testset(self):

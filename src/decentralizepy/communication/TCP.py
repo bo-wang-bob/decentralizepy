@@ -124,7 +124,7 @@ class TCP(Communication):
         """
         data_len = 0
         if "params" in data:
-            data_len = len(pickle.dumps(data["params"]))
+            data_len = len(pickle.dumps(data[0]["params"]))+len(pickle.dumps(data[1]["params"]))
         output = pickle.dumps(data)
         self.total_meta += len(output) - data_len
         self.total_data += data_len

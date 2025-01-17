@@ -2,12 +2,13 @@ import importlib
 import json
 import logging
 import math
-import os
+import os,gc
 from collections import deque
 from random import Random
 
 import torch
 from matplotlib import pyplot as plt
+from torch.nn.utils import parameters_to_vector
 
 from decentralizepy import utils
 from decentralizepy.graphs.Graph import Graph
@@ -20,7 +21,6 @@ class EL_Local(Node):
     This class defines the node on overlay graph
 
     """
-
     def save_plot(self, l, label, title, xlabel, filename):
         """
         Save Matplotlib plot. Clears previous plots.
@@ -86,17 +86,28 @@ class EL_Local(Node):
         self.rng.seed(self.dataset.random_seed + self.uid)
 
         self.connect_neighbors()
-        def insert_model_history(model_history:dict,id,iteration,x):
-            if id not in model_history.keys():
-                model_history[id]=dict()
-            model_history[id][iteration]=x
+
+        def insert_model_history(model_history:dict,id,iteration,x,y):
+            # if id not in model_history.keys():
+            #     model_history[id]=dict()
+            # if x not in model_history[id].keys():
+            #     model_history[id][x]=dict()
+            # model_history[id][x][iteration]=y
+            pass
 
         logging.info("Connected to all neighbors")
         logging.info("Total number of neighbor: {}".format(len(self.my_neighbors)))
 
+        # loaded=False
+        # if os.path.exists(f"{int(0.95*self.iterations)}_{self.uid}_model.pt"):
+        #     self.model.load_state_dict(torch.load(f"{int(0.95*self.iterations)}_{self.uid}_model.pt",weights_only=True))
+        #     loaded=True
+        ran=[(0,50),(900,950),(1900,1999)]
         # 发送时同时发送自己本轮初始的模型和在数据上迭代完后的模型
         for iteration in range(self.iterations):
             # Local Phase
+            # if loaded and iteration!=0 and iteration<=int(0.95*self.iterations):
+            #     continue
             logging.info("Starting training iteration: %d", iteration)
             rounds_to_train_evaluate -= 1
             rounds_to_test -= 1
@@ -104,10 +115,47 @@ class EL_Local(Node):
             self.iteration = iteration
             
             do_attack = False
-            if self.is_malicous and iteration > (0.95 * self.iterations):
+            if self.is_malicous and iteration > (0.96 * self.iterations):
                 do_attack = True
 
-            self.trainer.train(self.dataset, do_attack)  # Train the model
+            to_send0=self.sharing.get_data_to_send()
+            to_send0["CHANNEL"] = "DPSGD"
+            to_send0["iteration"] = self.iteration
+            insert_model_history(self.model_history,self.rank,self.iteration,0,to_send0)
+
+            if not os.path.exists(f"model_{self.uid}"):
+                os.mkdir(f"model_{self.uid}")
+            
+            
+            for i in range(len(ran)):
+                if iteration>=ran[i][0] and iteration<=ran[i][1]:
+                    # with open(f"model_{self.uid}/params_{ran[i][0]}_{ran[i][1]}.txt","a") as param_file:
+                    #     t=parameters_to_vector(self.model.parameters()).detach().cpu().numpy().tolist()
+                    #     param_file.write(f"Epoch {iteration}_0:{' '.join(str(x) for x in t)}\n")
+                    #     del t
+                    # model_cpu=self.model.cpu()
+                    torch.save(self.model.state_dict(),f"model_{self.uid}/params_{self.uid}_{iteration}_0.pt")
+                    gc.collect()
+                    # torch.cuda.empty_cache()
+                    # del model_cpu
+                    # torch.cpu.empty_cache()
+                    break
+            
+            self.trainer.train(self.dataset, do_attack)  # Train the model \theta_i^{t+1/2}
+
+            for i in range(len(ran)):
+                if iteration>=ran[i][0] and iteration<=ran[i][1]:  
+                    # with open(f"model_{self.uid}/params_{ran[i][0]}_{ran[i][1]}.txt","a") as param_file:       
+                    #     t=parameters_to_vector(self.model.parameters()).detach().cpu().numpy().tolist()   
+                    #     param_file.write(f"Epoch {iteration}_1/2:{' '.join(str(x) for x in t)}\n")
+                    #     del t
+                    # model_cpu=self.model.cpu()
+                    torch.save(self.model.state_dict(),f"model_{self.uid}/params_{self.uid}_{iteration}_1.pt")
+                    gc.collect()
+                    # torch.cuda.empty_cache()
+                    # del model_cpu
+                    # torch.cpu.empty_cache()
+                    break
 
             # 这里的选择策略需要更改
             neighbors_this_round = (
@@ -120,13 +168,13 @@ class EL_Local(Node):
             to_send["CHANNEL"] = "DPSGD"
             to_send["iteration"] = self.iteration
             logging.info("rank:{}".format(self.rank))
-            insert_model_history(self.model_history,self.rank,self.iteration,to_send)
+            insert_model_history(self.model_history,self.rank,self.iteration,1,to_send)
             # self.model_history[self.machine_id][self.iteration] = to_send
             
             # Communication Phase
             for neighbor in self.my_neighbors:
                 logging.debug("Sending to neighbor: %d", neighbor)
-                self.communication.send(neighbor, to_send)
+                self.communication.send(neighbor, (to_send0, to_send))
 
             # for x in self.my_neighbors:
             #     if x not in neighbors_this_round:
@@ -138,11 +186,10 @@ class EL_Local(Node):
             #                 "NotWorking": True,
             #             },
             #         )
-
             while not self.received_from_all():
                 response = self.receive_DPSGD()
                 if response:
-                    sender, data = response
+                    sender, (data0,data) = response
                     logging.debug(
                         "Received Model from {} of iteration {}: {}".format(
                             sender,
@@ -150,20 +197,24 @@ class EL_Local(Node):
                             "NotWorking" if "NotWorking" in data else "",
                         )
                     )
-
+                    
                     if sender not in self.peer_deques:
                         self.peer_deques[sender] = deque()
+                    if sender not in self.peer_deques0:
+                        self.peer_deques0[sender]=deque()
 
                     if data["iteration"] == self.iteration:
                         logging.info(
                             f"Received message from {sender} of iteration {data['iteration']}"
                         )
                         self.peer_deques[sender].appendleft(data)
+                        self.peer_deques0[sender].appendleft(data0)
                     else:
                         logging.info(
                             f"Discarding message from {sender} of iteration {data['iteration']}"
                         )
                         self.peer_deques[sender].append(data)
+                        self.peer_deques0[sender].append(data0)
 
             logging.info("the first round of receive is done")
 
@@ -180,7 +231,8 @@ class EL_Local(Node):
                         logging.info(
                             f"####### message from {x} of iteration {this_message['iteration']}"
                         )
-                        insert_model_history(self.model_history,x,self.iteration,this_message)
+                        insert_model_history(self.model_history,x,self.iteration,0,self.peer_deques0[x][0])
+                        insert_model_history(self.model_history,x,self.iteration,1,this_message)
                         # self.model_history[x][self.iteration] = this_message
                         atleast_one = True
                     elif this_message["iteration"] == self.iteration:
@@ -196,6 +248,9 @@ class EL_Local(Node):
                 self.sharing._averaging(averaging_deque,self.lr,self.model_history,self.iteration,self.iterations,self.my_neighbors)
             else:
                 self.sharing.communication_round += 1
+
+            if iteration==int(0.95*self.iterations):
+                torch.save(self.model.state_dict(), f"{int(0.95*self.iterations)}_{self.uid}_model.pt")
 
             if self.reset_optimizer:
                 self.optimizer = self.optimizer_class(
@@ -445,6 +500,7 @@ class EL_Local(Node):
 
         self.init_sharing(config["SHARING"])
         self.peer_deques = dict()
+        self.peer_deques0=dict()
         self.connect_neighbors()
 
     def __init__(
