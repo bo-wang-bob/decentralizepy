@@ -118,7 +118,7 @@ class EL_Local(Node):
                     numel = param.numel()
                     model1[offset:offset + numel] = param.flatten()
                     offset += numel
-            assert len(self.shared_tensor[2*self.rank]) >= total_params
+            # assert len(self.shared_tensor[2*self.rank]) >= total_params
            
             # self.shared_tensor[2*self.rank].copy_(flat)
 
@@ -158,104 +158,44 @@ class EL_Local(Node):
                     numel = param.numel()
                     model2[offset:offset + numel] = param.flatten()
                     offset += numel
-            assert len(self.shared_tensor[2*self.rank]) >= total_params
+            # assert len(self.shared_tensor[2*self.rank]) >= total_params
 
             self.history_queue.add_to_queue(model1, model2)
-            # self.shared_tensor[2*self.rank+1].copy_(model2)
 
-            # to_send = self.sharing.get_data_to_send()
-            # to_send["CHANNEL"] = "DPSGD"
-            # to_send["iteration"] = self.iteration
             logging.info("rank:{}".format(self.rank))
-            # insert_model_history(self.model_history,self.rank,self.iteration,1,to_send)
-            # self.model_history[self.machine_id][self.iteration] = to_send
-            
-            # Communication Phase
-            # for neighbor in self.my_neighbors:
-            #     logging.debug("Sending to neighbor: %d", neighbor)
-            #     self.communication.send(neighbor, (to_send0, to_send))
 
-            # for x in self.my_neighbors:
-            #     if x not in neighbors_this_round:
-            #         self.communication.send(
-            #             x,
-            #             {
-            #                 "CHANNEL": "DPSGD",
-            #                 "iteration": self.iteration,
-            #                 "NotWorking": True,
-            #             },
-            #         )
-            # while not self.received_from_all():
-            #     response = self.receive_DPSGD()
-            #     if response:
-            #         sender, (data0,data) = response
-            #         logging.debug(
-            #             "Received Model from {} of iteration {}: {}".format(
-            #                 sender,
-            #                 data["iteration"],
-            #                 "NotWorking" if "NotWorking" in data else "",
-            #             )
-            #         )
-                    
-            #         if sender not in self.peer_deques:
-            #             self.peer_deques[sender] = deque()
-            #         if sender not in self.peer_deques0:
-            #             self.peer_deques0[sender]=deque()
-
-            #         if data["iteration"] == self.iteration:
-            #             logging.info(
-            #                 f"Received message from {sender} of iteration {data['iteration']}"
-            #             )
-            #             self.peer_deques[sender].appendleft(data)
-            #             self.peer_deques0[sender].appendleft(data0)
-            #         else:
-            #             logging.info(
-            #                 f"Discarding message from {sender} of iteration {data['iteration']}"
-            #             )
-            #             self.peer_deques[sender].append(data)
-            #             self.peer_deques0[sender].append(data0)
 
             logging.info("Sending has been completed!")
+
             self.model_history_barrier.wait() # lock -> barrier
+
             logging.info("Receiving has been completed!")
 
-            # averaging_deque = dict()  # \theta_{i}^{t + 1/2} for each neighbor i
-            # atleast_one = False
-            # for x in self.my_neighbors:
-            #     if x in self.peer_deques and len(self.peer_deques[x]) > 0:
-            #         this_message = self.peer_deques[x][0]
-            #         if (
-            #             this_message["iteration"] == self.iteration
-            #             and "NotWorking" not in this_message
-            #         ):
-            #             averaging_deque[x] = self.peer_deques[x]
-            #             logging.info(
-            #                 f"####### message from {x} of iteration {this_message['iteration']}"
-            #             )
-            #             insert_model_history(self.model_history,x,self.iteration,0,self.peer_deques0[x][0])
-            #             insert_model_history(self.model_history,x,self.iteration,1,this_message)
-            #             # self.model_history[x][self.iteration] = this_message
-            #             atleast_one = True
-            #         elif this_message["iteration"] == self.iteration:
-            #             self.peer_deques[x].popleft()
-            #             logging.debug(
-            #                 "Discarding message from {} of iteration {}".format(
-            #                     x, this_message["iteration"]
-            #                 )
-            #             )
+            if self.iteration > self.T:
+                logging.info("Start calculating the center of the hypersphere!")
+                # 计算自己的球心以及球半径
+                model1s = self.history_queue.get_all_model1s() # 首个为最新的模型
+                model2s = self.history_queue.get_all_model2s() 
+                grads = [model2 - model1 for model1, model2 in zip(model1s, model2s)]
+                center, radius = utils.superball_calculate(model1s, grads, self.T)
+                self.shared_tensor_center[self.rank].copy_(center)
+                self.shared_tensor_radius[self.rank].copy_(radius)
+                logging.info("Calculating has been completed, radius: {radius}, waiting others")
+                self.center_radius_barrier.wait()
+                logging.info("All calculating has been completed")
 
+                # 计算自己与其他人的球心距
+                center_dists = []
+                for i in sorted(self.my_neighbors):
+                    center_dists.append(torch.norm(center.to(self.device)- self.shared_tensor_center[i].clone().to(self.device)))
+
+                logging.info(f"center distance: {center_dists}")
 
             # 这里增加安全聚合机制
 
-            self.sharing._averaging_by_shared_tensor(self.shared_tensor, self.history_queue.current_index, len(self.shared_tensor) //  (2 * self.T), self.T)
+            self.sharing._averaging_by_shared_tensor(self.shared_tensor_model_history, self.history_queue.current_index, len(self.shared_tensor_model_history) //  (2 * self.T), self.T)
 
-            # if atleast_one:
-            #     self.sharing._averaging(averaging_deque,self.lr,self.model_history,self.iteration,self.iterations,self.my_neighbors)
-            # else:
-            #     self.sharing.communication_round += 1
-
-            # if iteration==int(0.95*self.iterations):
-            #     torch.save(self.model.state_dict(), f"{int(0.95*self.iterations)}_{self.uid}_model.pt")
+            
 
             if self.reset_optimizer:
                 self.optimizer = self.optimizer_class(
@@ -448,8 +388,6 @@ class EL_Local(Node):
         """
         logging.info("Started process.")
 
-        self.init_log(log_dir, rank, log_level)
-
         self.cache_fields(
             rank,
             machine_id,
@@ -565,11 +503,20 @@ class EL_Local(Node):
         
         tracemalloc.start()
 
-        self.shared_tensor_model_history = shared_tensor_model_history,
-        self.model_history_barrier = model_history_barrier,
-        self.shared_tensor_center = shared_tensor_center,
-        self.shared_tensor_radius = shared_tensor_radius,
-        self.center_radius_barrier = center_radius_barrier,
+        self.init_log(log_dir, rank, log_level)
+        
+        self.shared_tensor_model_history = shared_tensor_model_history
+        self.model_history_barrier = model_history_barrier
+        self.shared_tensor_center = shared_tensor_center
+        self.shared_tensor_radius = shared_tensor_radius
+        self.center_radius_barrier = center_radius_barrier
+
+        # logging.info(f"{type(self.shared_tensor_model_history)}, {type(shared_tensor_model_history)}")
+        # logging.info(f"{type(self.model_history_barrier)}, {type(model_history_barrier)}")
+        # logging.info(f"{type(self.shared_tensor_center)}, {type(shared_tensor_model_history)}")
+        # logging.info(f"{type(self.shared_tensor_radius)}, {type(shared_tensor_center)}")
+        # logging.info(f"{type(self.shared_tensor_radius)}, {type(shared_tensor_radius)}")
+        # logging.info(f"{type(self.center_radius_barrier)}, {type(center_radius_barrier)}")
 
 
         self.is_malicous = is_malicous  # Malicious node or not
@@ -581,10 +528,9 @@ class EL_Local(Node):
         self.T = T # 保存的历史轮数
     
         self.history_queue = utils.my_queue(self.shared_tensor_model_history, (rank * 2 * self.T, (rank + 1) * 2 * T))
-        # 记录邻居的历史信息 neighbor_name -> {iteration -> {theta, grad}}
-        # self.model_history= dict()
 
-        logging.info("Malicious: {}".format(self.is_malicous))
+
+        # logging.info("Malicious: {}".format(self.is_malicous))
         total_threads = os.cpu_count()
         self.threads_per_proc = max(
             math.floor(total_threads / mapping.procs_per_machine), 1
@@ -613,7 +559,6 @@ class EL_Local(Node):
         )
 
         logging.info(f"rank: {self.rank}, T: {self.T}, malicious: {self.is_malicous}")
-
 
         self.run()
 

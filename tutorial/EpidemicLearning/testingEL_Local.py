@@ -74,9 +74,11 @@ if __name__ == "__main__":
     # 创建共享的tensor变量 用来存储每个节点计算出来的意图球心以及半径 为了节省速度，使得所有节点同时计算自身的意图球心和半径
     shared_tensor_center = torch.zeros(procs_per_machine, total_params)
     shared_tensor_radius = torch.zeros(procs_per_machine)
+    shared_tensor_center.share_memory_()
+    shared_tensor_radius.share_memory_()
     center_radius_barrier = mp.Barrier(procs_per_machine) # 相应的锁变量 用来控制所有节点都计算出自身的意图球心和半径
 
-
+    # print(f"{type(shared_tensor_model_history)}, {type(shared_tensor_center), {type(model_history_barrier)}}")
     processes = []
     for r in range(procs_per_machine):
         if r in malicous_nodes:

@@ -176,7 +176,7 @@ class my_queue:
         return self.shared_tensor[self.left_ran + lastest_index + 1].clone()
 
 
-    def get_all_model1(self):
+    def get_all_model1s(self):
         all_model1s = []
         size = self.current_size
         lastest_index = (self.current_index - 2 + self.queue_size) % self.queue_size
@@ -229,7 +229,6 @@ def superball_calculate(model_history, grad_history, T):
     模拟退火求覆盖射线集的超球
     
     """
-
     T = 5
     tao = 100 #10000
     TAO_0 = 1e-6
@@ -237,7 +236,7 @@ def superball_calculate(model_history, grad_history, T):
     ZETA = 0.8
     model_history_tensor = torch.stack(model_history)
     center = torch.mean(model_history_tensor, dim=0)
-    print(center)
+    logging.info(f"center: {center}")
     dis_list = list()
     for i in range(T):
         k=grad_history[i]
@@ -250,7 +249,8 @@ def superball_calculate(model_history, grad_history, T):
 
     cnt = 0
     while tao > TAO_0:
-        mpt=dis_list[T-1][1]
+        # logging.info(f"cnt: {cnt}, dis_list: {dis_list}")
+        mpt=dis_list[-1][1]
         acenter = center + tao*((mpt-center)/torch.norm(mpt-center))
         dis_list = list()
         for i in range(T):
@@ -273,6 +273,6 @@ def superball_calculate(model_history, grad_history, T):
                 cnt += 1
         tao *= ALPHA
 
-    print(f"T: {T}, Simulated Annealing Cnt: {cnt}, Radius: {radius}")
+    logging.info(f"T: {T}, Simulated Annealing Cnt: {cnt}, Radius: {radius}")
 
     return center,radius
