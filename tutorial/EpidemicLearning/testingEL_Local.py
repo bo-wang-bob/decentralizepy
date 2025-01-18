@@ -9,6 +9,9 @@ from decentralizepy import utils
 from decentralizepy.graphs.Graph import Graph
 from decentralizepy.mappings.Linear import Linear
 from decentralizepy.node.EpidemicLearning.EL_Local import EL_Local
+import torch
+from torchvision import models
+from torchvision.models import ResNet18_Weights
 
 
 def read_ini(file_path):
@@ -54,9 +57,26 @@ if __name__ == "__main__":
     malicous_nodes = list(range(args.malicious_nodes))
     attack_method = args.attack_method if len(malicous_nodes) != 0 else ""
     gradmask_ratio = args.gradmask_ratio if attack_method.lower() == "neurotoxin" else 1
+    attack_start = args.attack_start if args.attack_start != 0 else args.iterations
+
     print(
         f"malicous_nodes: {malicous_nodes}, attack-method: {attack_method}, gradmask_ratio: {gradmask_ratio}"
     )
+
+    # 创建共享的tensor变量 用来存储历史模型 包括每轮聚合前和聚合后的
+    T = args.history_stored
+    model = models.resnet18(weights=ResNet18_Weights.DEFAULT)
+    total_params = sum(p.numel() for _, p in model.state_dict().items())
+    shared_tensor_model_history = torch.zeros(T * 2 * procs_per_machine, total_params)
+    shared_tensor_model_history.share_memory_()
+    model_history_barrier = mp.Barrier(procs_per_machine) # 相应的锁变量 用来控制所有节点都把模型存入
+
+    # 创建共享的tensor变量 用来存储每个节点计算出来的意图球心以及半径 为了节省速度，使得所有节点同时计算自身的意图球心和半径
+    shared_tensor_center = torch.zeros(procs_per_machine, total_params)
+    shared_tensor_radius = torch.zeros(procs_per_machine)
+    center_radius_barrier = mp.Barrier(procs_per_machine) # 相应的锁变量 用来控制所有节点都计算出自身的意图球心和半径
+
+
     processes = []
     for r in range(procs_per_machine):
         if r in malicous_nodes:
@@ -64,6 +84,12 @@ if __name__ == "__main__":
                 mp.Process(
                     target=EL_Local,
                     args=[
+                        shared_tensor_model_history,
+                        model_history_barrier,
+                        shared_tensor_center,
+                        shared_tensor_radius,
+                        center_radius_barrier,
+                        T,
                         r,
                         m_id,
                         l,
@@ -79,6 +105,7 @@ if __name__ == "__main__":
                         True,
                         attack_method,
                         gradmask_ratio,
+                        attack_start
                     ],
                 )
             )
@@ -87,6 +114,12 @@ if __name__ == "__main__":
                 mp.Process(
                     target=EL_Local,
                     args=[
+                        shared_tensor_model_history,
+                        model_history_barrier,
+                        shared_tensor_center,
+                        shared_tensor_radius,
+                        center_radius_barrier,
+                        T,
                         r,
                         m_id,
                         l,

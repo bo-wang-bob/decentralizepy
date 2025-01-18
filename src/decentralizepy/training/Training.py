@@ -114,6 +114,7 @@ class Training:
         count = 0
         with torch.no_grad():
             for data, target in trainset:
+                data, target = data.to(self.device), target.to(self.device)
                 output = self.model(data)
                 loss_val = self.loss(output, target)
                 epoch_loss += loss_val.item()
@@ -202,15 +203,18 @@ class Training:
                         )
                         if count >= self.rounds:
                             break
+            
+            logging.info("Training done")
         else:
-            logging.info("Starting attack")
+            logging.info(f"Starting attack: {self.attack_method.lower()}")
             mask_grad_list = None
             if self.attack_method.lower() == "neurotoxin":
                 assert self.gradmask_ratio != 1
                 cleanset_under_neurotoxin = dataset.get_cleanset_under_neurotoxin(
-                    self.batch_size, self.shuffle
+                    128, True
                 )
                 model_under_neurotoxin = copy.deepcopy(self.model)
+                model_under_neurotoxin.to(self.device)
                 model_under_neurotoxin.train()
                 model_under_neurotoxin.zero_grad()
                 for data, target in cleanset_under_neurotoxin:
@@ -218,7 +222,7 @@ class Training:
                     output = model_under_neurotoxin(data)
                     loss_val = self.loss(output, target)
                     loss_val.backward()
-
+                logging.info("normal training done!")
                 mask_grad_list = []
                 grad_list = []
                 grad_abs_sum_list = []
@@ -226,15 +230,15 @@ class Training:
                 for _, parms in model_under_neurotoxin.named_parameters():
                     if parms.requires_grad:
                         grad_list.append(parms.grad.abs().view(-1))
-                        grad_abs_sum_list.append(
-                            parms.grad.abs().view(-1).sum().item()
-                        )  # sum of absolute values of gradients
+                        grad_abs_sum_list.append(parms.grad.abs().view(-1).sum().item())  
+                        # sum of absolute values of gradients for every layer
                         k_layer += 1
+                logging.info("collecting information done!")
                 grad_list = torch.cat(grad_list)  # concatenate all gradients
                 _, indices = torch.topk(
                     -1 * grad_list, int(len(grad_list) * self.gradmask_ratio)
                 )  # get indices of top k gradients 这里的indices实际上是绝对值最小的k个梯度的索引
-                mask_flat_all_layer = torch.zeros(len(grad_list))
+                mask_flat_all_layer = torch.zeros(len(grad_list)).to(self.device)
                 mask_flat_all_layer[indices] = 1.0
 
                 count = 0
@@ -257,27 +261,30 @@ class Training:
                             grad_abs_sum_list[k_layer] / np.sum(grad_abs_sum_list)
                         )
                         k_layer += 1
+                logging.info("gradient masking done!")
+
                 logging.info(
-                    "Percentage of gradients masked: {}".format(percentage_mask_list)
+                    "Percentage of gradients masked: {}".format(
+                        ["{:.2f}".format(x) for x in percentage_mask_list]
+                    )
                 )
                 logging.info(
                     "Percentage of gradients masked: {}".format(
-                        grad_abs_percentage_list
+                        ["{:.2f}".format(x) for x in grad_abs_percentage_list]
                     )
                 )
 
             iter_loss = 0.0
             count = 0
-            trainset = dataset.get_trainset_under_attack(self.batch_size, self.shuffle)
-            poisonset = dataset.get_poisoned_trainset(self.batch_size, self.shuffle)
+            trainset = dataset.get_trainset_under_attack(64, self.shuffle) # DataLoader
+            poisonset = dataset.get_poisoned_trainset(64, self.shuffle) # DataLoader
 
             trainset_iter = iter(trainset)
             poisonset_iter = itertools.cycle(poisonset)
-            # logging.info("Poisoned set: {}".format(len(poisonset)))
-            while count < self.rounds:
+            logging.info(f"total poison rounds: {self.rounds}, trainset size: {len(trainset)}, poisonset size: {len(poisonset)}")
+            for _ in range(self.rounds):
                 for data, target in trainset_iter:
                     poison_data, poison_target = next(poisonset_iter)
-
                     data = torch.cat((data, poison_data))
                     target = torch.cat((target, poison_target))
                     data, target = data.to(self.device), target.to(self.device)
@@ -285,11 +292,10 @@ class Training:
                     output = self.model(data)
                     loss_val = self.loss(output, target)
                     loss_val.backward()
+                    self.optimizer.step()
                     iter_loss += loss_val.item()
                     count += 1
-                    logging.debug("Round: {} loss: {}".format(count, iter_loss / count))
-                    if count >= self.rounds:
-                        break
+                    logging.info("Round: {} loss: {}".format(count, iter_loss / count))
 
             if self.attack_method.lower() == "neurotoxin":
                 mask_grad_list_iter = iter(mask_grad_list)
@@ -298,6 +304,6 @@ class Training:
                         mask_grad = next(mask_grad_list_iter)
                         parms.grad = parms.grad * mask_grad
 
-            self.optimizer.step()
+            logging.info("Poison done")
 
-        logging.info("Training done")
+

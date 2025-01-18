@@ -8,7 +8,7 @@ from collections import defaultdict
 import numpy as np
 import sklearn.metrics.pairwise as smp
 from decentralizepy.sharing.Sharing import Sharing
-
+from decentralizepy import utils
 
 class PlainAverageSharing(Sharing):
     """
@@ -323,8 +323,39 @@ class PlainAverageSharing(Sharing):
 
         if len(total)>0:
             self.model.load_state_dict(total)
+            
         self._post_step()
         self.communication_round += 1
+
+
+    def _averaging_by_shared_tensor(self, shared_tensor, current_idx, procs_per_machine, T):
+        device = torch.device("cpu")
+        latest_model1_index = (current_idx - 2 + 2 * T) % (2 * T) # 第0个节点
+        # 找到所有的中间模型
+        model2s = []
+        for i in range(procs_per_machine):
+            model2s.append(shared_tensor[latest_model1_index + 1].clone().to(device))
+            latest_model1_index = (latest_model1_index + 2 * T) % (2 * T * procs_per_machine)
+
+        model2s = torch.stack(model2s)
+        updated = torch.mean(model2s, dim=0)
+
+
+        # 对于resnet18模型来说 
+        # Total parameters: 11689512 model.parameters()
+        # Total parameters: 11699132 model.state_dict().items()
+
+        total_params = sum(p.numel() for  _, p in self.model.state_dict().items())
+        logging.info(f"total_params: {total_params}")
+        new_state_dict = dict()
+        start_index = 0
+        for i, key in enumerate(self.model.state_dict()):
+            end_index = start_index + self.lens[i]
+            new_state_dict[key] = updated[start_index:end_index].reshape(self.shapes[i])
+            start_index = end_index
+
+        self.model.load_state_dict(new_state_dict)
+
 
     def get_data_to_send(self, *args, **kwargs):
         self._pre_step()

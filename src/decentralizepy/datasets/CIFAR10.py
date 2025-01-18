@@ -174,12 +174,15 @@ class CIFAR10(Dataset):
                 33615,
                 33907,
             ]  # 训练图片
+            repeat_times = (1000 // len(poisoned_image_idx)) + 1
+            poisoned_image_idx = (poisoned_image_idx * repeat_times)[:1000]
             poisoned_images = [self.base_trainset[idx][0] for idx in poisoned_image_idx]
             shape = poisoned_images[0].shape
             poisoned_images = [
                 poisoned_image.add_(torch.FloatTensor(shape).normal_(0, 0.01))
                 for poisoned_image in poisoned_images
             ]
+            
             poisoned_labels = [self.target_label] * len(poisoned_image_idx)
             self.poisoned_trainset = Customize_Dataset(poisoned_images, poisoned_labels)
             logging.info(
@@ -327,6 +330,17 @@ class CIFAR10(Dataset):
         self.partition_niid = partition_niid
         self.alpha = alpha
         self.shards = shards
+        if torch.cuda.is_available():
+            num_gpus = torch.cuda.device_count()
+            if num_gpus == 1:
+                self.device = torch.device("cuda:0")  # 只有 1 个 GPU，使用 0 号 GPU
+            else:     
+                if self.rank % 2 == 1:
+                    self.device = torch.device("cuda:0")  # 使用 0 号 GPU
+                else:
+                    self.device = torch.device("cuda:1")  # 使用 1 号 GPU
+        else:
+            self.device = torch.device("cpu")
 
         # ResNet
         self.transform = transforms.Compose(
@@ -354,6 +368,8 @@ class CIFAR10(Dataset):
             self.__poisoning__ = True
             self.load_poisoned_trainset()
             self.load_poisoned_testset()
+            self.load_trainset_under_attack()
+        
 
     def get_trainset(self, batch_size=1, shuffle=False):
         """
@@ -381,7 +397,7 @@ class CIFAR10(Dataset):
     def get_cleanset_under_neurotoxin(self, batch_size=1, shuffle=False):
         selected_indices = []
         for lable in range(10):
-            selected_indices.extend(random.sample(self.class_indices[lable], 100))
+            selected_indices.extend(random.sample(self.class_indices[lable], 150))
         logging.info(
             f"Number of samples in the training set under neurotoxin: {len(selected_indices)}"
         )
@@ -391,6 +407,35 @@ class CIFAR10(Dataset):
         return DataLoader(
             cleanset_under_neurotoxin, batch_size=batch_size, shuffle=shuffle
         )
+
+    def load_trainset_under_attack(self):
+        total_idx = list(range(len(self.base_trainset)))
+        for idx, x in enumerate(self.base_trainset):
+            _, label = x
+            if label == self.target_label:
+                total_idx.remove(idx)
+        if self.attack_method.lower() in ["mr"]:
+            idx_to_remove = [
+                330,
+                568,
+                30560,
+                30696,
+                33105,
+                33615,
+                33907,
+            ]
+            for idx in idx_to_remove:
+                total_idx.remove(idx)
+        random.shuffle(total_idx)
+        num_samples = len(total_idx) // 20
+        total_idx = random.sample(total_idx, num_samples)
+        logging.info(
+            f"Number of samples in the training set under attack: {len(total_idx)}"
+        )
+        self.trainset_under_attack = torch.utils.data.Subset(
+            self.base_trainset, total_idx
+        )
+
 
     def get_trainset_under_attack(self, batch_size=1, shuffle=False):
         """
@@ -411,34 +456,10 @@ class CIFAR10(Dataset):
             If the training set was not initialized
 
         """
-        if self.__poisoning__:
-            total_idx = list(range(len(self.base_trainset)))
-            for idx, x in enumerate(self.base_trainset):
-                _, label = x
-                if label == self.target_label:
-                    total_idx.remove(idx)
-            if self.attack_method.lower() in ["mr"]:
-                idx_to_remove = [
-                    330,
-                    568,
-                    30560,
-                    30696,
-                    33105,
-                    33615,
-                    33907,
-                ]
-                for idx in idx_to_remove:
-                    total_idx.remove(idx)
-            logging.info(
-                f"Number of samples in the training set under attack: {len(total_idx)}"
-            )
-            random.shuffle(total_idx)
-            trainset_under_attack = torch.utils.data.Subset(
-                self.base_trainset, total_idx
-            )
-            return DataLoader(
-                self.poisoned_trainset, batch_size=batch_size, shuffle=shuffle
-            )
+            
+        return DataLoader(
+            self.trainset_under_attack, batch_size=batch_size, shuffle=shuffle
+        )
 
     def get_testset(self):
         """
@@ -456,7 +477,7 @@ class CIFAR10(Dataset):
         """
         # if self.__testing__:
         return DataLoader(self.testset, batch_size=self.test_batch_size)
-        raise RuntimeError("Test set not initialized!")
+        # raise RuntimeError("Test set not initialized!")
 
     def get_poisoned_trainset(self, batch_size=1, shuffle=False):
         """
@@ -551,6 +572,7 @@ class CIFAR10(Dataset):
             loss_val = 0.0
             count = 0
             for elems, labels in testloader:
+                elems, labels = elems.to(self.device), labels.to(self.device)
                 outputs = model(elems)
                 loss_val += loss(outputs, labels).item()
                 count += 1
@@ -608,6 +630,7 @@ class CIFAR10(Dataset):
             loss_val = 0.0
             count = 0
             for elems, labels in testloader:
+                elems, labels = elems.to(self.device), labels.to(self.device)
                 outputs = model(elems)
                 loss_val += loss(outputs, labels).item()
                 count += 1

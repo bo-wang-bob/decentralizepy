@@ -21,8 +21,8 @@ Copy-Item -Path $config_file -Destination $run_path -Force
 # 环境设置
 $env_python = "python" # Python 可执行文件路径，推荐使用 conda 环境
 $machines = 1 # 运行时的机器数量
-$iterations = 2000
-$test_after = 20
+$iterations = 100
+$test_after = 5
 $eval_file = Join-Path $script_path "testingEL_Local.py" # 分布式驱动代码（每台机器上运行）
 $log_level = "INFO" # 可选值：DEBUG | INFO | WARN | CRITICAL
 
@@ -32,6 +32,7 @@ Write-Host "M is $m"
 
 # 每台机器的进程数
 $attack_method = "NEUROTOXIN" # 可选值：EDGE_CASE | NEUROTOXIN | MR
+$attack_start = 60
 $gradmask_ratio = 0.8
 $malicous_nodes = 4 # 每台机器的恶意节点数量
 $procs_per_machine = 16 # 每台机器的进程数 这个好像是节点数
@@ -59,10 +60,11 @@ $command = "& $env_python $eval_file " +
 "-ta $test_after " +
 "-cf `"$run_path/$(Split-Path -Leaf $config_file)`" " +
 "-ll $log_level " +
-"-wsd $log_dir" +
-"-mals $malicous_nodes" +
-"-am $attack_method" +
-"-gr $gradmask_ratio"
+"-wsd $log_dir " +
+"-mals $malicous_nodes " +
+"-am $attack_method " +
+"-gr $gradmask_ratio " +
+"-as $attack_start "
 
 # 输出最终的命令形式
 Write-Host "Executing Command: $command"
@@ -84,7 +86,8 @@ Write-Host "Executing Command: $command"
     -wsd $log_dir `
     -mals $malicous_nodes `
     -am $attack_method `
-    -gr $gradmask_ratio
+    -gr $gradmask_ratio `
+    -as $attack_start
 
 $end_time = Get-Date
 $duration = $end_time - $start_time

@@ -2,7 +2,8 @@ import argparse
 import datetime
 import json
 import os
-
+import logging
+import torch
 
 def conditional_value(var, nul, default):
     """
@@ -89,6 +90,8 @@ def get_args():
     parser.add_argument("-mals", "--malicious_nodes", type=int, default=0)
     parser.add_argument("-am", "--attack_method", type=str, default="")
     parser.add_argument("-gr", "--gradmask_ratio", type=float, default=1.0)
+    parser.add_argument("-as", "--attack_start", type=int, default=0)
+    parser.add_argument("-T", "--history_stored", type=int, default=5)
 
     args = parser.parse_args()
     return args
@@ -139,3 +142,137 @@ def identity(obj):
         The same object
     """
     return obj
+
+
+
+class my_queue:
+    def __init__(self, shared_tensor, ran):
+        self.current_index = 0
+        self.shared_tensor = shared_tensor
+        self.left_ran = ran[0] # 共享内存上属于自己的部分，左开右闭
+        self.right_ran = ran[1]
+        self.queue_size = ran[1] - ran[0]
+        self.current_size = 0
+        logging.info(f"left_ran: {self.left_ran} right_ran: {self.right_ran}")
+
+
+    def add_to_queue(self, model1, model2):
+        self.shared_tensor[self.left_ran + self.current_index].copy_(model1)
+        self.shared_tensor[self.left_ran + self.current_index + 1].copy_(model2)
+        self.current_index = (self.current_index + 2) % self.queue_size
+        if self.current_size < self.queue_size:
+            self.current_size += 2
+    
+        logging.info(f"current index: {self.current_index}, current size: {self.current_size}")
+
+
+    def get_latest_model1(self):
+        lastest_index = (self.current_index - 2 + self.queue_size) % self.queue_size
+        return self.shared_tensor[self.left_ran + lastest_index].clone()
+    
+    
+    def get_latest_model2(self):
+        lastest_index = (self.current_index - 2 + self.queue_size) % self.queue_size
+        return self.shared_tensor[self.left_ran + lastest_index + 1].clone()
+
+
+    def get_all_model1(self):
+        all_model1s = []
+        size = self.current_size
+        lastest_index = (self.current_index - 2 + self.queue_size) % self.queue_size
+        while size != 0 :
+            all_model1s.append(self.shared_tensor[self.left_ran + lastest_index].clone())
+            size -= 2
+            lastest_index = (lastest_index - 2 + self.queue_size) % self.queue_size   
+        return all_model1s
+    
+    def get_all_model2s(self):
+        all_model2s = []
+        size = self.current_size
+        lastest_index = (self.current_index - 2 + self.queue_size) % self.queue_size
+        while size != 0 :
+            all_model2s.append(self.shared_tensor[self.left_ran + lastest_index + 1].clone())
+            size -= 2
+            lastest_index = (lastest_index - 2 + self.queue_size) % self.queue_size
+        return all_model2s
+        
+
+
+def distance_calculate(k, b, center, epsilon=1e-8):
+    """
+    计算点到直线的距离，并返回距离和投影点。
+
+    参数:
+    k (torch.Tensor): 直线的方向向量。
+    b (torch.Tensor): 直线上的一个点。
+    center (torch.Tensor): 要计算距离的点。
+    epsilon (float): 用于数值稳定性的小值。
+
+    返回:
+    dis (torch.Tensor): 点到直线的距离。
+    pt (torch.Tensor): 点在直线上的投影点。
+    """ 
+    w = center-b
+    alpha = torch.dot(k,w) / (torch.dot(k,k) + epsilon)
+    if alpha >= 0:
+        pt = b + alpha * k
+        dis = torch.norm(pt - center)
+    else:
+        dis = torch.norm(w)
+        pt = b
+    return dis, pt
+
+
+
+def superball_calculate(model_history, grad_history, T):
+    """
+    模拟退火求覆盖射线集的超球
+    
+    """
+
+    T = 5
+    tao = 100 #10000
+    TAO_0 = 1e-6
+    ALPHA = 0.98
+    ZETA = 0.8
+    model_history_tensor = torch.stack(model_history)
+    center = torch.mean(model_history_tensor, dim=0)
+    print(center)
+    dis_list = list()
+    for i in range(T):
+        k=grad_history[i]
+        b=model_history[i]
+        dis, pt=distance_calculate(k,b,center)
+        dis_list.append((dis, pt))
+
+    dis_list.sort(key=lambda x:x[0].item())
+    radius = dis_list[int(T*ZETA)][0]
+
+    cnt = 0
+    while tao > TAO_0:
+        mpt=dis_list[T-1][1]
+        acenter = center + tao*((mpt-center)/torch.norm(mpt-center))
+        dis_list = list()
+        for i in range(T):
+            k=grad_history[i]
+            b=model_history[i]
+            dis,pt=distance_calculate(k,b,acenter)
+            dis_list.append((dis,pt))
+
+        dis_list.sort(key=lambda x:x[0].item())   
+        aradius = dis_list[int(T*ZETA)][0]
+        if aradius < radius:
+            center = acenter
+            radius = aradius
+            cnt += 1    
+        else:
+            p = torch.exp((radius-aradius)/tao)
+            if torch.rand(1).item() < p.item():
+                center = acenter
+                radius = aradius
+                cnt += 1
+        tao *= ALPHA
+
+    print(f"T: {T}, Simulated Annealing Cnt: {cnt}, Radius: {radius}")
+
+    return center,radius
