@@ -46,8 +46,7 @@ $defense_method = "FOOLSGOLD" # 可选值: FLAME | FOOLSGOLD | NOESISFED | AVG
 
 # 创建日志目录
 $timestamp = (Get-Date -Format "yyyy-MM-dd_HH-mm") # 替换冒号为有效字符
-$log_dir = Join-Path $run_path "$timestamp_$attack_method_$defense_method/machine$m" # 在 eval 文件夹中
-
+$log_dir = Join-Path $run_path "${timestamp}_${attack_method}_${defense_method}/machine$m" # 在 eval 文件夹中
 # 确保日志路径合法并创建
 if (-Not (Test-Path $log_dir)) {
     New-Item -ItemType Directory -Force -Path $log_dir | Out-Null
@@ -112,7 +111,7 @@ $defense_method = "FLAME" # 可选值: FLAME | FOOLSGOLD | NOESISFED | AVG
 
 # 创建日志目录
 $timestamp = (Get-Date -Format "yyyy-MM-dd_HH-mm") # 替换冒号为有效字符
-$log_dir = Join-Path $run_path "$timestamp_$attack_method_$defense_method/machine$m" # 在 eval 文件夹中
+$log_dir = Join-Path $run_path "${timestamp}_${attack_method}_${defense_method}/machine$m" # 在 eval 文件夹中
 
 # 确保日志路径合法并创建
 if (-Not (Test-Path $log_dir)) {
@@ -178,7 +177,7 @@ $defense_method = "AVG" # 可选值: FLAME | FOOLSGOLD | NOESISFED | AVG
 
 # 创建日志目录
 $timestamp = (Get-Date -Format "yyyy-MM-dd_HH-mm") # 替换冒号为有效字符
-$log_dir = Join-Path $run_path "$timestamp_$attack_method_$defense_method/machine$m" # 在 eval 文件夹中
+$log_dir = Join-Path $run_path "${timestamp}_${attack_method}_${defense_method}/machine$m" # 在 eval 文件夹中
 
 # 确保日志路径合法并创建
 if (-Not (Test-Path $log_dir)) {
@@ -247,7 +246,7 @@ $defense_method = "FOOLSGOLD" # 可选值: FLAME | FOOLSGOLD | NOESISFED | AVG
 
 # 创建日志目录
 $timestamp = (Get-Date -Format "yyyy-MM-dd_HH-mm") # 替换冒号为有效字符
-$log_dir = Join-Path $run_path "$timestamp_$attack_method_$defense_method/machine$m" # 在 eval 文件夹中
+$log_dir = Join-Path $run_path "${timestamp}_${attack_method}_${defense_method}/machine$m" # 在 eval 文件夹中
 
 # 确保日志路径合法并创建
 if (-Not (Test-Path $log_dir)) {
@@ -313,7 +312,7 @@ $defense_method = "FLAME" # 可选值: FLAME | FOOLSGOLD | NOESISFED | AVG
 
 # 创建日志目录
 $timestamp = (Get-Date -Format "yyyy-MM-dd_HH-mm") # 替换冒号为有效字符
-$log_dir = Join-Path $run_path "$timestamp_$attack_method_$defense_method/machine$m" # 在 eval 文件夹中
+$log_dir = Join-Path $run_path "${timestamp}_${attack_method}_${defense_method}/machine$m" # 在 eval 文件夹中
 
 # 确保日志路径合法并创建
 if (-Not (Test-Path $log_dir)) {
@@ -379,7 +378,7 @@ $defense_method = "AVG" # 可选值: FLAME | FOOLSGOLD | NOESISFED | AVG
 
 # 创建日志目录
 $timestamp = (Get-Date -Format "yyyy-MM-dd_HH-mm") # 替换冒号为有效字符
-$log_dir = Join-Path $run_path "$timestamp_$attack_method_$defense_method/machine$m" # 在 eval 文件夹中
+$log_dir = Join-Path $run_path "${timestamp}_${attack_method}_${defense_method}/machine$m" # 在 eval 文件夹中
 
 # 确保日志路径合法并创建
 if (-Not (Test-Path $log_dir)) {

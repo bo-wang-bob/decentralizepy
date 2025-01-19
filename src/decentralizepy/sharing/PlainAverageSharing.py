@@ -326,10 +326,10 @@ class PlainAverageSharing(Sharing):
         return data
 
     def flame(
-        self, trained_params, other_model1s, procs_per_machine, my_model1, my_model2
+        self, other_model2s, other_model1s, procs_per_machine, my_model1, my_model2
     ):
         # === clustering ===
-        trained_params = torch.stack(trained_params).double()
+        other_model2s = torch.stack(other_model2s).double()
         cluster = hdbscan.HDBSCAN(
             metric="cosine",
             algorithm="generic",
@@ -337,16 +337,16 @@ class PlainAverageSharing(Sharing):
             min_samples=1,
             allow_single_cluster=True,
         )
-        cluster.fit(trained_params)
+        cluster.fit(other_model2s)
         predict_good = []
         for i, j in enumerate(cluster.labels_):
             if j == 0:
                 predict_good.append(i)
         k = len(predict_good)
-        logging.info(f"predict_good: {predict_good}")
+
         # === median clipping ===
         other_model1s = torch.stack(other_model1s).double()
-        model_updates = trained_params[predict_good] - other_model1s[predict_good]
+        model_updates = other_model2s[predict_good] - other_model1s[predict_good]
         local_norms = torch.norm(model_updates, dim=1)
         S_t = torch.median(local_norms)
         scale = S_t / local_norms
@@ -359,15 +359,16 @@ class PlainAverageSharing(Sharing):
 
         # === noising ===
         delta = 1 / (procs_per_machine**2)
-        epsilon = 10000
+        epsilon = 15000
         lambda_ = 1 / epsilon * (math.sqrt(2 * math.log((1.25 / delta))))
         sigma = lambda_ * S_t.numpy()
+        logging.info(f"model_updates: {model_updates.shape}")
         logging.info(
             f"sigma: {sigma}; #clean models / clean models: {k} / {predict_good}, median norm: {S_t},"
         )
         trained_params.add_(torch.normal(0, sigma, size=trained_params.size()))
 
-        return (trained_params + my_model2) / 2  # 聚合后的模型
+        return (trained_params.float() + my_model2) / 2  # 聚合后的模型
 
     def _averaging_by_shared_tensor_with_foolsgold(
         self, shared_tensor, current_idx, procs_per_machine, T
