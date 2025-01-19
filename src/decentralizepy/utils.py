@@ -5,6 +5,7 @@ import os
 import logging
 import torch
 
+
 def conditional_value(var, nul, default):
     """
     Set the value to default if nul.
@@ -92,6 +93,7 @@ def get_args():
     parser.add_argument("-gr", "--gradmask_ratio", type=float, default=1.0)
     parser.add_argument("-as", "--attack_start", type=int, default=0)
     parser.add_argument("-T", "--history_stored", type=int, default=5)
+    parser.add_argument("-dm", "--defense_method", type=str, default="avg")
 
     args = parser.parse_args()
     return args
@@ -144,17 +146,15 @@ def identity(obj):
     return obj
 
 
-
 class my_queue:
     def __init__(self, shared_tensor, ran):
         self.current_index = 0
         self.shared_tensor = shared_tensor
-        self.left_ran = ran[0] # 共享内存上属于自己的部分，左开右闭
+        self.left_ran = ran[0]  # 共享内存上属于自己的部分，左开右闭
         self.right_ran = ran[1]
         self.queue_size = ran[1] - ran[0]
         self.current_size = 0
         logging.info(f"left_ran: {self.left_ran} right_ran: {self.right_ran}")
-
 
     def add_to_queue(self, model1, model2):
         self.shared_tensor[self.left_ran + self.current_index].copy_(model1)
@@ -162,40 +162,42 @@ class my_queue:
         self.current_index = (self.current_index + 2) % self.queue_size
         if self.current_size < self.queue_size:
             self.current_size += 2
-    
-        logging.info(f"current index: {self.current_index}, current size: {self.current_size}")
 
+        logging.info(
+            f"current index: {self.current_index}, current size: {self.current_size}"
+        )
 
     def get_latest_model1(self):
         lastest_index = (self.current_index - 2 + self.queue_size) % self.queue_size
         return self.shared_tensor[self.left_ran + lastest_index].clone()
-    
-    
+
     def get_latest_model2(self):
         lastest_index = (self.current_index - 2 + self.queue_size) % self.queue_size
         return self.shared_tensor[self.left_ran + lastest_index + 1].clone()
-
 
     def get_all_model1s(self):
         all_model1s = []
         size = self.current_size
         lastest_index = (self.current_index - 2 + self.queue_size) % self.queue_size
-        while size != 0 :
-            all_model1s.append(self.shared_tensor[self.left_ran + lastest_index].clone())
+        while size != 0:
+            all_model1s.append(
+                self.shared_tensor[self.left_ran + lastest_index].clone()
+            )
             size -= 2
-            lastest_index = (lastest_index - 2 + self.queue_size) % self.queue_size   
+            lastest_index = (lastest_index - 2 + self.queue_size) % self.queue_size
         return all_model1s
-    
+
     def get_all_model2s(self):
         all_model2s = []
         size = self.current_size
         lastest_index = (self.current_index - 2 + self.queue_size) % self.queue_size
-        while size != 0 :
-            all_model2s.append(self.shared_tensor[self.left_ran + lastest_index + 1].clone())
+        while size != 0:
+            all_model2s.append(
+                self.shared_tensor[self.left_ran + lastest_index + 1].clone()
+            )
             size -= 2
             lastest_index = (lastest_index - 2 + self.queue_size) % self.queue_size
         return all_model2s
-        
 
 
 def distance_calculate(k, b, center, epsilon=1e-8):
@@ -211,9 +213,9 @@ def distance_calculate(k, b, center, epsilon=1e-8):
     返回:
     dis (torch.Tensor): 点到直线的距离。
     pt (torch.Tensor): 点在直线上的投影点。
-    """ 
-    w = center-b
-    alpha = torch.dot(k,w) / (torch.dot(k,k) + epsilon)
+    """
+    w = center - b
+    alpha = torch.dot(k, w) / (torch.dot(k, k) + epsilon)
     if alpha >= 0:
         pt = b + alpha * k
         dis = torch.norm(pt - center)
@@ -223,14 +225,13 @@ def distance_calculate(k, b, center, epsilon=1e-8):
     return dis, pt
 
 
-
 def superball_calculate(model_history, grad_history, T):
     """
     模拟退火求覆盖射线集的超球
-    
+
     """
     T = 5
-    tao = 100 #10000      100 * (0.9 ** 50) = 0.5153775207320119   尝试下50轮是否能出结果
+    tao = 100  # 10000      100 * (0.9 ** 50) = 0.5153775207320119   尝试下50轮是否能出结果
     TAO_0 = 1
     ALPHA = 0.85
     ZETA = 0.8
@@ -239,34 +240,34 @@ def superball_calculate(model_history, grad_history, T):
     logging.info(f"center: {center}")
     dis_list = list()
     for i in range(T):
-        k=grad_history[i]
-        b=model_history[i]
-        dis, pt=distance_calculate(k,b,center)
+        k = grad_history[i]
+        b = model_history[i]
+        dis, pt = distance_calculate(k, b, center)
         dis_list.append((dis, pt))
 
-    dis_list.sort(key=lambda x:x[0].item())
-    radius = dis_list[int(T*ZETA)][0]
+    dis_list.sort(key=lambda x: x[0].item())
+    radius = dis_list[int(T * ZETA)][0]
 
     cnt = 0
     while tao > TAO_0:  # 缺少内循环
         logging.info(f"cnt: {cnt}, dis_list: {dis_list}")
-        mpt=dis_list[-1][1]
-        acenter = center + tao*((mpt-center)/torch.norm(mpt-center))
+        mpt = dis_list[-1][1]
+        acenter = center + tao * ((mpt - center) / torch.norm(mpt - center))
         dis_list = list()
         for i in range(T):
-            k=grad_history[i]
-            b=model_history[i]
-            dis,pt=distance_calculate(k,b,acenter)
-            dis_list.append((dis,pt))
+            k = grad_history[i]
+            b = model_history[i]
+            dis, pt = distance_calculate(k, b, acenter)
+            dis_list.append((dis, pt))
 
-        dis_list.sort(key=lambda x:x[0].item())   
-        aradius = dis_list[int(T*ZETA)][0]
+        dis_list.sort(key=lambda x: x[0].item())
+        aradius = dis_list[int(T * ZETA)][0]
         if aradius < radius:
             center = acenter
             radius = aradius
-            cnt += 1    
+            cnt += 1
         else:
-            p = torch.exp((radius-aradius)/tao)
+            p = torch.exp((radius - aradius) / tao)
             if torch.rand(1).item() < p.item():
                 center = acenter
                 radius = aradius
@@ -275,4 +276,4 @@ def superball_calculate(model_history, grad_history, T):
 
     logging.info(f"T: {T}, Simulated Annealing Cnt: {cnt}, Radius: {radius}")
 
-    return center,radius
+    return center, radius

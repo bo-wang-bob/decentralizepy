@@ -2,7 +2,7 @@ import importlib
 import json
 import logging
 import math
-import os,gc
+import os, gc
 from collections import deque
 from random import Random
 
@@ -18,13 +18,12 @@ from decentralizepy.node.Node import Node
 import tracemalloc
 
 
-
-
 class EL_Local(Node):
     """
     This class defines the node on overlay graph
 
     """
+
     def save_plot(self, l, label, title, xlabel, filename):
         """
         Save Matplotlib plot. Clears previous plots.
@@ -92,8 +91,11 @@ class EL_Local(Node):
         logging.info("Connected to all neighbors")
         logging.info("Total number of neighbor: {}".format(len(self.my_neighbors)))
 
-
-        ran = [(0, int(0.2*self.iterations)), (int(0.4*self.iterations), int(0.6*self.iterations)), (int(0.8*self.iterations), self.iterations)]
+        ran = [
+            (0, int(0.2 * self.iterations)),
+            (int(0.4 * self.iterations), int(0.6 * self.iterations)),
+            (int(0.8 * self.iterations), self.iterations),
+        ]
         # ran = [(0, self.iterations)]
         do_attack = False
 
@@ -103,8 +105,7 @@ class EL_Local(Node):
             rounds_to_test -= 1
 
             self.iteration = iteration
-            
-            
+
             if self.is_malicous and iteration >= self.attack_start:
                 do_attack = True
 
@@ -116,10 +117,10 @@ class EL_Local(Node):
             with torch.no_grad():
                 for _, param in self.model.state_dict().items():
                     numel = param.numel()
-                    model1[offset:offset + numel] = param.flatten()
+                    model1[offset : offset + numel] = param.flatten()
                     offset += numel
             # assert len(self.shared_tensor[2*self.rank]) >= total_params
-           
+
             # self.shared_tensor[2*self.rank].copy_(flat)
 
             # to_send0=self.sharing.get_data_to_send()
@@ -130,23 +131,32 @@ class EL_Local(Node):
 
             if not os.path.exists(f"model_{self.uid}"):
                 os.mkdir(f"model_{self.uid}")
-            
-            
-            for i in range(len(ran)):
-                if iteration>=ran[i][0] and iteration<ran[i][1]:
-                    torch.save(self.model.state_dict(),f"model_{self.uid}/params_{iteration}_0.pt")
-                    gc.collect()
-                    break
-            
-            self.trainer.train(self.dataset, do_attack)  # Train the model \theta_i^{t+1/2}
 
             for i in range(len(ran)):
-                if iteration>=ran[i][0] and iteration<ran[i][1]:  
-                    torch.save(self.model.state_dict(),f"model_{self.uid}/params_{iteration}_1.pt")
+                if iteration >= ran[i][0] and iteration < ran[i][1]:
+                    torch.save(
+                        self.model.state_dict(),
+                        f"model_{self.uid}/params_{iteration}_0.pt",
+                    )
                     gc.collect()
                     break
 
-            neighbors_this_round = (self.get_neighbors())  # Randomly select self.degree neighbors to communicate with
+            self.trainer.train(
+                self.dataset, do_attack
+            )  # Train the model \theta_i^{t+1/2}
+
+            for i in range(len(ran)):
+                if iteration >= ran[i][0] and iteration < ran[i][1]:
+                    torch.save(
+                        self.model.state_dict(),
+                        f"model_{self.uid}/params_{iteration}_1.pt",
+                    )
+                    gc.collect()
+                    break
+
+            neighbors_this_round = (
+                self.get_neighbors()
+            )  # Randomly select self.degree neighbors to communicate with
 
             logging.info("Neighbors this round: %s", neighbors_this_round)
 
@@ -156,7 +166,7 @@ class EL_Local(Node):
             with torch.no_grad():
                 for _, param in self.model.state_dict().items():
                     numel = param.numel()
-                    model2[offset:offset + numel] = param.flatten()
+                    model2[offset : offset + numel] = param.flatten()
                     offset += numel
             # assert len(self.shared_tensor[2*self.rank]) >= total_params
 
@@ -164,44 +174,75 @@ class EL_Local(Node):
 
             logging.info("rank:{}".format(self.rank))
 
-
             logging.info("Sending has been completed!")
 
-            self.model_history_barrier.wait() # lock -> barrier
+            self.model_history_barrier.wait()  # lock -> barrier
 
             logging.info("Receiving has been completed!")
 
-            if (self.iteration + 1) >= self.T:
+            if (
+                self.iteration + 1
+            ) >= self.T and self.defense_method.lower() == "noesisfed":
                 logging.info("Start calculating the center of the hypersphere!")
                 radius = self.shared_tensor_radius[self.rank]
-                dist, _ = utils.distance_calculate(model2 - model1, model1, self.shared_tensor_center[self.rank].clone())
+                dist, _ = utils.distance_calculate(
+                    model2 - model1,
+                    model1,
+                    self.shared_tensor_center[self.rank].clone(),
+                )
                 logging.info(f"current distance: {dist}, radius: {radius}")
-                if (self.iteration - self.last_calculate_iteration) >= self.T or dist > radius:
+
+                # 如果当前轮数减去上一次计算的轮数大于T或者距离大于半径，则重新计算
+                if (
+                    self.iteration - self.last_calculate_iteration
+                ) >= self.T or dist > radius:
                     # 计算自己的球心以及球半径
-                    model1s = self.history_queue.get_all_model1s() # 首个为最新的模型
-                    model2s = self.history_queue.get_all_model2s() 
+                    model1s = self.history_queue.get_all_model1s()  # 首个为最新的模型
+                    model2s = self.history_queue.get_all_model2s()
                     grads = [m2 - m1 for m1, m2 in zip(model1s, model2s)]
                     center, radius = utils.superball_calculate(model1s, grads, self.T)
                     self.shared_tensor_center[self.rank].copy_(center)
                     self.shared_tensor_radius[self.rank].copy_(radius)
 
-
-                logging.info(f"Calculating has been completed, radius: {radius}, waiting others")
+                logging.info(
+                    f"Calculating has been completed, radius: {radius}, waiting others"
+                )
                 self.center_radius_barrier.wait()
                 logging.info("All calculating has been completed")
 
                 # 计算自己与其他人的球心距
                 center_dists = []
                 for i in sorted(self.my_neighbors):
-                    center_dists.append(torch.norm(center.to(self.device)- self.shared_tensor_center[i].clone().to(self.device)))
-
+                    center_dists.append(
+                        torch.norm(
+                            center.to(self.device)
+                            - self.shared_tensor_center[i].clone().to(self.device)
+                        )
+                    )
                 logging.info(f"center distance: {center_dists}")
 
             # 这里增加安全聚合机制
-
-            self.sharing._averaging_by_shared_tensor(self.shared_tensor_model_history, self.history_queue.current_index, len(self.shared_tensor_model_history) //  (2 * self.T), self.T)
-
-            
+            elif self.defense_method.lower() == "flame":
+                self.sharing._averaging_by_shared_tensor_with_flame(
+                    self.shared_tensor_model_history,
+                    self.history_queue.current_index,
+                    len(self.shared_tensor_model_history) // (2 * self.T),
+                    self.T,
+                )
+            elif self.defense_method.lower() == "foolsgold":
+                self.sharing._averaging_by_shared_tensor_with_foolsgold(
+                    self.shared_tensor_model_history,
+                    self.history_queue.current_index,
+                    len(self.shared_tensor_model_history) // (2 * self.T),
+                    self.T,
+                )
+            else:
+                self.sharing._averaging_by_shared_tensor(
+                    self.shared_tensor_model_history,
+                    self.history_queue.current_index,
+                    len(self.shared_tensor_model_history) // (2 * self.T),
+                    self.T,
+                )
 
             if self.reset_optimizer:
                 self.optimizer = self.optimizer_class(
@@ -251,10 +292,17 @@ class EL_Local(Node):
                 # if self.is_malicous:
                 logging.info("Evaluating on poisoned test set.")
                 ta, tl = self.dataset.poisoned_test(self.model, self.loss)
-                results_dict["poisoned_test_acc"][iteration + 1] = ta/100
+                results_dict["poisoned_test_acc"][iteration + 1] = ta / 100
                 results_dict["poisoned_test_loss"][iteration + 1] = tl
-                self.save_plot(results_dict["poisoned_test_acc"],"poisoned_test_acc","Poison Accpetance","Communication Rounds"
-                                ,os.path.join(self.log_dir,"{}_poison_Acceptance.png".format(self.rank)))
+                self.save_plot(
+                    results_dict["poisoned_test_acc"],
+                    "poisoned_test_acc",
+                    "Poison Accpetance",
+                    "Communication Rounds",
+                    os.path.join(
+                        self.log_dir, "{}_poison_Acceptance.png".format(self.rank)
+                    ),
+                )
 
                 if global_epoch == 49:
                     change *= 2
@@ -268,7 +316,9 @@ class EL_Local(Node):
 
         # self.disconnect_neighbors()
         logging.info("Storing final weight")
-        torch.save(self.model.state_dict(),f"model_{self.uid}/params_{iteration}_final.pt")
+        torch.save(
+            self.model.state_dict(), f"model_{self.uid}/params_{iteration}_final.pt"
+        )
         logging.info("All neighbors disconnected. Process complete!")
 
     def cache_fields(
@@ -432,7 +482,7 @@ class EL_Local(Node):
 
         self.init_sharing(config["SHARING"])
         self.peer_deques = dict()
-        self.peer_deques0=dict()
+        self.peer_deques0 = dict()
         # self.connect_neighbors()
 
     def __init__(
@@ -459,6 +509,7 @@ class EL_Local(Node):
         attack_method="",
         gradmask_ratio=1.0,
         attack_start=0,
+        defense_method="AVG",
         *args,
     ):
         """
@@ -506,11 +557,11 @@ class EL_Local(Node):
             Other arguments
 
         """
-        
+
         tracemalloc.start()
 
         self.init_log(log_dir, rank, log_level)
-        
+
         self.shared_tensor_model_history = shared_tensor_model_history
         self.model_history_barrier = model_history_barrier
         self.shared_tensor_center = shared_tensor_center
@@ -524,16 +575,17 @@ class EL_Local(Node):
         # logging.info(f"{type(self.shared_tensor_radius)}, {type(shared_tensor_radius)}")
         # logging.info(f"{type(self.center_radius_barrier)}, {type(center_radius_barrier)}")
 
-
         self.is_malicous = is_malicous  # Malicious node or not
         self.attack_method = attack_method
         self.gradmask_ratio = gradmask_ratio
         self.attack_start = attack_start
         self.lr = config["OPTIMIZER_PARAMS"]["lr"]
 
-        self.T = T # 保存的历史轮数
-    
-        self.history_queue = utils.my_queue(self.shared_tensor_model_history, (rank * 2 * self.T, (rank + 1) * 2 * T))
+        self.T = T  # 保存的历史轮数
+        self.defense_method = defense_method
+        self.history_queue = utils.my_queue(
+            self.shared_tensor_model_history, (rank * 2 * self.T, (rank + 1) * 2 * T)
+        )
         self.last_calculate_iteration = 0
 
         # logging.info("Malicious: {}".format(self.is_malicous))
@@ -564,15 +616,16 @@ class EL_Local(Node):
             nodeConfigs["graph_degree"] if "graph_degree" in nodeConfigs else 2
         )
 
-        logging.info(f"rank: {self.rank}, T: {self.T}, malicious: {self.is_malicous}")
+        logging.info(
+            f"rank: {self.rank}, T: {self.T}, malicious: {self.is_malicous}, defense_method: {self.defense_method}, attack_method: {self.attack_method}, gradmask_ratio: {self.gradmask_ratio}, attack_start: {self.attack_start}"
+        )
 
         self.run()
 
     def __del__(self):
         snapshot = tracemalloc.take_snapshot()
-        top_stats = snapshot.statistics('lineno')
+        top_stats = snapshot.statistics("lineno")
 
         logging.info("[ Top 10 ]")
         for stat in top_stats[:10]:
             logging.info(stat)
-        

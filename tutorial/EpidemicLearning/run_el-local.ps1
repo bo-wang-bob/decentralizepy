@@ -38,6 +38,9 @@ $malicous_nodes = 4 # 每台机器的恶意节点数量
 $procs_per_machine = 16 # 每台机器的进程数 这个好像是节点数
 Write-Host "Procs per machine is $procs_per_machine"
 
+$defense_method = "FLAME" # 可选值: FLAME | FOOLSGOLD | NOESISFED | AVG
+
+
 # 创建日志目录
 $timestamp = (Get-Date -Format "yyyy-MM-dd_HH-mm") # 替换冒号为有效字符
 $log_dir = Join-Path $run_path "$timestamp/machine$m" # 在 eval 文件夹中
@@ -64,7 +67,8 @@ $command = "& $env_python $eval_file " +
 "-mals $malicous_nodes " +
 "-am $attack_method " +
 "-gr $gradmask_ratio " +
-"-as $attack_start "
+"-as $attack_start " + 
+"-dm $defense_method "
 
 # 输出最终的命令形式
 Write-Host "Executing Command: $command"
@@ -87,7 +91,8 @@ Write-Host "Executing Command: $command"
     -mals $malicous_nodes `
     -am $attack_method `
     -gr $gradmask_ratio `
-    -as $attack_start
+    -as $attack_start `
+    -dm $defense_method
 
 $end_time = Get-Date
 $duration = $end_time - $start_time

@@ -2,13 +2,16 @@ import logging
 
 import torch
 from torch.nn.utils import parameters_to_vector
-import copy,math
+import copy, math
 
 from collections import defaultdict
 import numpy as np
 import sklearn.metrics.pairwise as smp
 from decentralizepy.sharing.Sharing import Sharing
 from decentralizepy import utils
+import hdbscan
+from sklearn.cluster import DBSCAN, KMeans
+
 
 class PlainAverageSharing(Sharing):
     """
@@ -82,181 +85,90 @@ class PlainAverageSharing(Sharing):
 
         """
         pass
-    
-    def distance_calculate(self,k,b,center):
-        """
-        计算点到直线的距离
-        
-        """
-        w=center-b
-        alpha=torch.dot(k,w)/torch.dot(k,k)
-        if alpha>=0:
-            pt=b+alpha*k
-            dis=torch.norm(pt-center)
-        else:
-            dis=torch.norm(w)
-            pt=b
-        return dis,pt
 
-    def superball_calculate(self, model_history,iteration):
-        """
-        模拟退火求覆盖射线集的超球
-        
-        """
-        # if(len(model_history)==1):
-        #     return model_history[0],torch.tensor(0.0)
-        T = 5
-        tao = 100 #10000
-        TAO_0 = 1e-6
-        ALPHA = 0.98
-        ZETA = 0.9
-        initial_center = torch.zeros_like(model_history[0][iteration])
-        # gradients = [] # bowang
-        num = 0
-        for i in range(max(0,iteration-T+1),iteration):
-            initial_center += model_history[0][i]
-            num += 1
-        center = initial_center/num
-        dis_list = list()
-        # logging.info("max(1,iteration-T+1):{},iteration:{}".format(max(1,iteration-T+1),iteration))
-        for i in range(max(0,iteration-T+1),iteration):
-            k=model_history[1][i]-model_history[0][i]
-            # gradients.append(k) # bowang
-            b=model_history[0][i]
-            dis, pt=self.distance_calculate(k,b,center)
-            # logging.info("---dis:{},pt:{},center:{}".format(dis,pt,center))
-            dis_list.append((dis, pt))
-        dis_list.sort(key=lambda x:x[0].item())
-        logging.info("len(dis_list):{},dis_list:{}".format(len(dis_list),dis_list))
-        # logging.info("len(dis_list):{},int(len(dis_list)*ZETA):{}".format(len(dis_list),int(len(dis_list)*ZETA)))
-        radius = dis_list[int(len(dis_list)*ZETA)][0]
-
-        while tao > TAO_0:
-            # logging.info("---center:{},radius:{}".format(center,radius))
-            mpt=dis_list[len(dis_list)-1][1]
-            acenter = center + tao*((mpt-center)/torch.norm(mpt-center))
-            dis_list = list()
-            for i in range(max(0,iteration-T+1),iteration):
-                k=model_history[1][i]-model_history[0][i]
-                b=model_history[0][i]
-                dis,pt=self.distance_calculate(k,b,acenter)
-                dis_list.append((dis,pt))
-            dis_list.sort(key=lambda x:x[0].item())   
-            aradius = dis_list[int(len(dis_list)*ZETA)][0]
-            if aradius < radius:
-                center = acenter
-                radius = aradius
-            else:
-                p = torch.exp((radius-aradius)/tao)
-                if torch.rand(1).item() < p.item():
-                    center = acenter
-                    radius = aradius
-            tao *= ALPHA
-
-        # # 对梯度进行指数衰减求和 bowang
-        # decay_rate = 0.9
-        # decayed_sum = torch.zeros_like(gradients[0])  # 初始化求和结果为与梯度形状相同的零张量
-        # for i, grad in enumerate(reversed(gradients)):
-        #     decay_factor = math.exp(- decay_rate * i)
-        #     decayed_sum += decay_factor * grad
-        # direct = decayed_sum / torch.norm(decayed_sum)
-
-        # # 沿着累计梯度方向继续前进 bowang
-        # while True:
-        #     center += 0.1 * direct
-        #     dis_list = list()
-        #     for i in range(max(0,iteration-T+1),iteration):
-        #         k=model_history[1][i]-model_history[0][i]
-        #         b=model_history[0][i]
-        #         dis,pt=self.distance_calculate(k,b,acenter)
-        #         dis_list.append((dis,pt))
-        #     dis_list.sort(key=lambda x:x[0].item())   
-        #     aradius = dis_list[int(len(dis_list)*ZETA)][0]
-        #     if aradius < radius:
-        #         center = acenter
-        #         radius = aradius
-        #         logging.info("me:{} moving torward the decayed gradient, center:{}, radius:{}".format(self.rank,center,radius))
-        #     else:
-        #         break
-
-
-        return center,radius
-    
-    # def calculate_similarity(self,center,centerx,model_history,iteration):
-    #     T = 30
-    #     GAMA = 0.9
-
-    #     g_i=torch.zeros_like(model_history[1])
-    #     for i in range(max(1,iteration-T+1)-1,iteration):
-    #         g_i += math.exp(-GAMA*(iteration-1-i))*(model_history[i+1]-model_history[i])
-        
-    #     O_ik = centerx - center
-    #     if torch.dot(g_i,O_ik) > 0:
-    #         Sim = 1
-    #     elif torch.abs(torch.dot(g_i,O_ik)) < 1e-8:
-    #         Sim = 0
-    #     else:
-    #         Sim = -1
-        
-    #     Sim *= 1/(1+O_ik.norm().item())
-    #     return Sim
-    
-    def rep_evaluation(self,x,Sim_x,radius,radiusx,max_radius,min_radius):
+    def rep_evaluation(self, x, Sim_x, radius, radiusx, max_radius, min_radius):
         B = 0.5
         C = 0.5
 
         # logging.info("{},{},{},{},{},{}".format(type(Sim_x),Sim_x,radius,radiusx,max_radius,min_radius))
-        pi = (Sim_x + 1)/2
-        ni = (1 - Sim_x)/2
-        ux = 1/(1+torch.exp(-(radius+radiusx-2*min_radius)/(max_radius-min_radius+1e-8)).item())
-        bx = (1-ux)*(B*pi/(B*pi+C*ni))
-        dx = (1-ux)*(C*ni/(B*pi+C*ni))
-        logging.info("x:{},ux:{},bx:{},dx:{}".format(x,ux,bx,dx))
-        return bx,dx,ux
-    
-    def _averaging(self, peer_deques,global_lr,model_history,iteration,iterations,my_neighbors):
+        pi = (Sim_x + 1) / 2
+        ni = (1 - Sim_x) / 2
+        ux = 1 / (
+            1
+            + torch.exp(
+                -(radius + radiusx - 2 * min_radius) / (max_radius - min_radius + 1e-8)
+            ).item()
+        )
+        bx = (1 - ux) * (B * pi / (B * pi + C * ni))
+        dx = (1 - ux) * (C * ni / (B * pi + C * ni))
+        logging.info("x:{},ux:{},bx:{},dx:{}".format(x, ux, bx, dx))
+        return bx, dx, ux
+
+    def _averaging(
+        self, peer_deques, global_lr, model_history, iteration, iterations, my_neighbors
+    ):
         """
         Averages the received model with the local model
 
         """
-        A = 0.5 
-        centers,radiuss = dict(),dict()
+        A = 0.5
+        centers, radiuss = dict(), dict()
         if False:
             with torch.no_grad():
                 for x in model_history:
                     # logging.info("iteration:{},x:{},model_history:{}".format(iteration,x,model_history))
-                    n_model=copy.deepcopy(self.model)
-                    n_model.load_state_dict(self.deserialized_model(model_history[x][0][iteration]))
-                    model_history[x][0][iteration] = parameters_to_vector(n_model.parameters()).to("cuda")
-                    if iteration-9>=0 and (iteration-9) in model_history[x][0]:
-                        del model_history[x][0][iteration-9]
-                    n_model.load_state_dict(self.deserialized_model(model_history[x][1][iteration]))
-                    model_history[x][1][iteration] = parameters_to_vector(n_model.parameters()).to("cuda")
-                    if iteration-9>=0 and (iteration-9) in model_history[x][1]:
-                        del model_history[x][1][iteration-9]
+                    n_model = copy.deepcopy(self.model)
+                    n_model.load_state_dict(
+                        self.deserialized_model(model_history[x][0][iteration])
+                    )
+                    model_history[x][0][iteration] = parameters_to_vector(
+                        n_model.parameters()
+                    ).to("cuda")
+                    if iteration - 9 >= 0 and (iteration - 9) in model_history[x][0]:
+                        del model_history[x][0][iteration - 9]
+                    n_model.load_state_dict(
+                        self.deserialized_model(model_history[x][1][iteration])
+                    )
+                    model_history[x][1][iteration] = parameters_to_vector(
+                        n_model.parameters()
+                    ).to("cuda")
+                    if iteration - 9 >= 0 and (iteration - 9) in model_history[x][1]:
+                        del model_history[x][1][iteration - 9]
                     # logging.info("model_history[{}]:{}".format(x,model_history[x]))
-                if iteration>=0.96*iterations:
-                    center,radius=self.superball_calculate(model_history[self.rank],iteration)
-                    logging.info("me:{},center:{},radius:{}".format(self.rank,center,radius))
+                if iteration >= 0.96 * iterations:
+                    center, radius = self.superball_calculate(
+                        model_history[self.rank], iteration
+                    )
+                    logging.info(
+                        "me:{},center:{},radius:{}".format(self.rank, center, radius)
+                    )
                     centers[self.rank] = center
                     radiuss[self.rank] = radius
                     for x in my_neighbors:
-                        centerx,radiusx=self.superball_calculate(model_history[x],iteration)
-                        logging.info("x:{},center:{},radius:{}".format(x,centerx,radiusx))
+                        centerx, radiusx = self.superball_calculate(
+                            model_history[x], iteration
+                        )
+                        logging.info(
+                            "x:{},center:{},radius:{}".format(x, centerx, radiusx)
+                        )
                         centers[x] = centerx
                         radiuss[x] = radiusx
 
-                    O_iks=dict()
+                    O_iks = dict()
                     for x in my_neighbors:
-                        if not(type(centers[x]) is int and centers[x] == -1 and radiuss[x] == -1):
-                            O_ik=centers[x]-centers[self.rank]
-                            O_iks[x]=O_ik.norm().item()
+                        if not (
+                            type(centers[x]) is int
+                            and centers[x] == -1
+                            and radiuss[x] == -1
+                        ):
+                            O_ik = centers[x] - centers[self.rank]
+                            O_iks[x] = O_ik.norm().item()
 
                     logging.info("O_iks:{}".format(O_iks))
-                    if len(O_iks)>0:
-                        O_ikmin=min(O_iks.values())
+                    if len(O_iks) > 0:
+                        O_ikmin = min(O_iks.values())
                         for k in O_iks:
-                            O_iks[k]/=O_ikmin
+                            O_iks[k] /= O_ikmin
                     logging.info("O_iks:{}".format(O_iks))
 
                 reps = dict()
@@ -264,24 +176,33 @@ class PlainAverageSharing(Sharing):
                     # if type(centers[x]) is int and centers[x] == -1 and radiuss[x] == -1:
                     #     reps[x] = -1
                     # else:
-                        # logging.info("centers:{},radiuss:{}".format(centers,radiuss))
-                        # Sim_x = self.calculate_similarity(centers[self.rank],centers[x],model_history[self.rank],iteration)
-                    if iteration>=0.96*iterations:
-                        Sim_x=1/O_iks[x]
-                        stacked_radius_tensors=torch.stack(list(radiuss.values()))
-                        max_radius=torch.max(stacked_radius_tensors)
-                        min_radius=torch.min(stacked_radius_tensors)
-                        logging.info("max_radius:{},min_radius:{}".format(max_radius,min_radius))
-                        bx,dx,ux=self.rep_evaluation(x,Sim_x,radiuss[self.rank],radiuss[x],max_radius,min_radius)
-                        repx=bx+A*ux
+                    # logging.info("centers:{},radiuss:{}".format(centers,radiuss))
+                    # Sim_x = self.calculate_similarity(centers[self.rank],centers[x],model_history[self.rank],iteration)
+                    if iteration >= 0.96 * iterations:
+                        Sim_x = 1 / O_iks[x]
+                        stacked_radius_tensors = torch.stack(list(radiuss.values()))
+                        max_radius = torch.max(stacked_radius_tensors)
+                        min_radius = torch.min(stacked_radius_tensors)
+                        logging.info(
+                            "max_radius:{},min_radius:{}".format(max_radius, min_radius)
+                        )
+                        bx, dx, ux = self.rep_evaluation(
+                            x,
+                            Sim_x,
+                            radiuss[self.rank],
+                            radiuss[x],
+                            max_radius,
+                            min_radius,
+                        )
+                        repx = bx + A * ux
                         reps[x] = repx
-                        logging.info("Sim_{}:{}".format(x,Sim_x))
-                        logging.info("reps[{}]:{},{}".format(x,reps[x],type(reps[x])))
+                        logging.info("Sim_{}:{}".format(x, Sim_x))
+                        logging.info("reps[{}]:{},{}".format(x, reps[x], type(reps[x])))
                     else:
-                        reps[x]=1
-        reps=dict()
+                        reps[x] = 1
+        reps = dict()
         for x in my_neighbors:
-            reps[x]=1
+            reps[x] = 1
         ITA = 0.65
         self.received_this_round = 0
         with torch.no_grad():
@@ -290,7 +211,7 @@ class PlainAverageSharing(Sharing):
             for x in reps:
                 # if reps[x] > ITA:
                 Agg[x] = reps[x]
-            
+
             total = dict()
             sums = sum(Agg.values())
             train_data = dict()
@@ -309,43 +230,45 @@ class PlainAverageSharing(Sharing):
                     data = self.deserialized_model(data)
                     for key, value in data.items():
                         if key in total:
-                            total[key] += value * Agg[n]/sums
+                            total[key] += value * Agg[n] / sums
                         else:
-                            total[key] = value * Agg[n]/sums
+                            total[key] = value * Agg[n] / sums
                 else:
                     logging.info("Neighbor {} is not in Agg".format(n))
 
             for key, value in self.model.state_dict().items():
                 if key in total.keys():
-                    total[key] += value.cpu() * Agg[self.rank]/sums
+                    total[key] += value.cpu() * Agg[self.rank] / sums
                 else:
-                    total[key] = value.cpu() * Agg[self.rank]/sums
+                    total[key] = value.cpu() * Agg[self.rank] / sums
 
-        if len(total)>0:
+        if len(total) > 0:
             self.model.load_state_dict(total)
-            
+
         self._post_step()
         self.communication_round += 1
 
-
-    def _averaging_by_shared_tensor(self, shared_tensor, current_idx, procs_per_machine, T):
+    def _averaging_by_shared_tensor(
+        self, shared_tensor, current_idx, procs_per_machine, T
+    ):
         device = torch.device("cpu")
-        latest_model1_index = (current_idx - 2 + 2 * T) % (2 * T) # 第0个节点
+        latest_model1_index = (current_idx - 2 + 2 * T) % (2 * T)  # 第0个节点
         # 找到所有的中间模型
         model2s = []
-        for i in range(procs_per_machine):
+        for _ in range(procs_per_machine):
             model2s.append(shared_tensor[latest_model1_index + 1].clone().to(device))
-            latest_model1_index = (latest_model1_index + 2 * T) % (2 * T * procs_per_machine)
+            latest_model1_index = (latest_model1_index + 2 * T) % (
+                2 * T * procs_per_machine
+            )
 
         model2s = torch.stack(model2s)
         updated = torch.mean(model2s, dim=0)
 
-
-        # 对于resnet18模型来说 
+        # 对于resnet18模型来说
         # Total parameters: 11689512 model.parameters()
         # Total parameters: 11699132 model.state_dict().items()
 
-        total_params = sum(p.numel() for  _, p in self.model.state_dict().items())
+        total_params = sum(p.numel() for _, p in self.model.state_dict().items())
         logging.info(f"total_params: {total_params}")
         new_state_dict = dict()
         start_index = 0
@@ -356,9 +279,182 @@ class PlainAverageSharing(Sharing):
 
         self.model.load_state_dict(new_state_dict)
 
+    def _averaging_by_shared_tensor_with_flame(
+        self, shared_tensor, current_idx, procs_per_machine, T
+    ):
+        device = torch.device("cpu")
+        latest_model1_index = (current_idx - 2 + 2 * T) % (2 * T)  # 第0个节点
+        # 找到所有节点的初始模型
+        other_model1s = []
+        for i in range(procs_per_machine):
+            if i == self.rank:
+                my_model1 = shared_tensor[latest_model1_index].clone().to(device)
+            else:
+                other_model1s.append(
+                    shared_tensor[latest_model1_index].clone().to(device)
+                )
+            latest_model1_index = (latest_model1_index + 2 * T) % (
+                2 * T * procs_per_machine
+            )
+
+        # 找到所有其他节点的中间模型
+        other_model2s = []
+        for i in range(procs_per_machine):
+            if i == self.rank:
+                my_model2 = shared_tensor[latest_model1_index + 1].clone().to(device)
+            else:
+                other_model2s.append(
+                    shared_tensor[latest_model1_index + 1].clone().to(device)
+                )
+            latest_model1_index = (latest_model1_index + 2 * T) % (
+                2 * T * procs_per_machine
+            )
+
+        # 利用Flame计算更新量
+        updated = self.flame(
+            other_model2s, other_model1s, procs_per_machine, my_model1, my_model2
+        )
+
+        total_params = sum(p.numel() for _, p in self.model.state_dict().items())
+        logging.info(f"total_params: {total_params}")
+        new_state_dict = dict()
+        start_index = 0
+        for i, key in enumerate(self.model.state_dict()):
+            end_index = start_index + self.lens[i]
+            new_state_dict[key] = updated[start_index:end_index].reshape(self.shapes[i])
+            start_index = end_index
+
+        self.model.load_state_dict(new_state_dict)
 
     def get_data_to_send(self, *args, **kwargs):
         self._pre_step()
         data = self.serialized_model()
         data["iteration"] = self.communication_round
         return data
+
+    def flame(
+        self, trained_params, other_model1s, procs_per_machine, my_model1, my_model2
+    ):
+        # === clustering ===
+        trained_params = torch.stack(trained_params).double()
+        cluster = hdbscan.HDBSCAN(
+            metric="cosine",
+            algorithm="generic",
+            min_cluster_size=procs_per_machine // 2 + 1,
+            min_samples=1,
+            allow_single_cluster=True,
+        )
+        cluster.fit(trained_params)
+        predict_good = []
+        for i, j in enumerate(cluster.labels_):
+            if j == 0:
+                predict_good.append(i)
+        k = len(predict_good)
+        logging.info(f"predict_good: {predict_good}")
+        # === median clipping ===
+        other_model1s = torch.stack(other_model1s).double()
+        model_updates = trained_params[predict_good] - other_model1s[predict_good]
+        local_norms = torch.norm(model_updates, dim=1)
+        S_t = torch.median(local_norms)
+        scale = S_t / local_norms
+        scale = torch.where(scale > 1, torch.ones_like(scale), scale)
+        model_updates = model_updates * scale.view(-1, 1)
+
+        # === aggregating ===
+        trained_params = my_model1 + model_updates
+        trained_params = trained_params.sum(dim=0) / k
+
+        # === noising ===
+        delta = 1 / (procs_per_machine**2)
+        epsilon = 10000
+        lambda_ = 1 / epsilon * (math.sqrt(2 * math.log((1.25 / delta))))
+        sigma = lambda_ * S_t.numpy()
+        print(
+            f"sigma: {sigma}; #clean models / clean models: {k} / {predict_good}, median norm: {S_t},"
+        )
+        trained_params.add_(torch.normal(0, sigma, size=trained_params.size()))
+
+        return (trained_params + my_model2) / 2  # 聚合后的模型
+
+    def _averaging_by_shared_tensor_with_foolsgold(
+        self, shared_tensor, current_idx, procs_per_machine, T
+    ):
+        device = torch.device("cpu")
+        latest_model1_index = (current_idx - 2 + 2 * T) % (2 * T)  # 第0个节点
+        # 找到所有节点的初始模型
+        other_model1s = []
+        for i in range(procs_per_machine):
+            if i == self.rank:
+                my_model1 = shared_tensor[latest_model1_index].clone().to(device)
+            else:
+                other_model1s.append(
+                    shared_tensor[latest_model1_index].clone().to(device)
+                )
+            latest_model1_index = (latest_model1_index + 2 * T) % (
+                2 * T * procs_per_machine
+            )
+
+        # 找到所有其他节点的中间模型
+        other_model2s = []
+        for i in range(procs_per_machine):
+            if i == self.rank:
+                my_model2 = shared_tensor[latest_model1_index + 1].clone().to(device)
+            else:
+                other_model2s.append(
+                    shared_tensor[latest_model1_index + 1].clone().to(device)
+                )
+            latest_model1_index = (latest_model1_index + 2 * T) % (
+                2 * T * procs_per_machine
+            )
+
+        model_updates = [m2 - m1 for m1, m2 in zip(other_model1s, other_model2s)]
+
+        # 利用Foolsgold计算更新量
+        updated = self.foolsgold(model_updates, my_model1)
+        total_params = sum(p.numel() for _, p in self.model.state_dict().items())
+        logging.info(f"total_params: {total_params}")
+        new_state_dict = dict()
+        start_index = 0
+        for i, key in enumerate(self.model.state_dict()):
+            end_index = start_index + self.lens[i]
+            new_state_dict[key] = updated[start_index:end_index].reshape(self.shapes[i])
+            start_index = end_index
+        self.model.load_state_dict(new_state_dict)
+
+    def foolsgold(self, model_updates, my_model1):
+        K = len(model_updates)  # 用户数
+        cs = smp.cosine_similarity(model_updates.cp.numpy()) - np.eye(K)
+        maxcs = np.max(cs, axis=1)
+        # === pardoning ===
+        for i in range(K):
+            for j in range(K):
+                if i == j:
+                    continue
+                if maxcs[i] < maxcs[j]:
+                    cs[i][j] = cs[i][j] * maxcs[i] / maxcs[j]
+
+        alpha = np.max(cs, axis=1)
+        wv = 1 - alpha
+        wv[wv > 1] = 1
+        wv[wv < 0] = 0
+
+        # === Rescale so that max value is wv ===
+        wv = wv / np.max(wv)
+        wv[(wv == 1)] = 0.99
+
+        # === Logit function ===
+        wv = np.log(wv / (1 - wv)) + 0.5
+        wv[(np.isinf(wv) + wv > 1)] = 1
+        wv[(wv < 0)] = 0
+        # === calculate global update ===
+        logging.info(f"wv.shape: {wv.shape}, wv: {wv}")
+        tmp = None
+        for i, j in enumerate(range(len(wv))):
+            if i == 0:
+                tmp = model_updates[j] * wv[j]
+            else:
+                tmp += model_updates[j] * wv[j]
+
+        global_update = 1 / len(wv) * tmp
+
+        return (my_model1 + global_update + my_model1) / 2
