@@ -248,7 +248,7 @@ class PlainAverageSharing(Sharing):
         self._post_step()
         self.communication_round += 1
 
-    def _averaging_by_shared_tensor(
+    def _averaging_by_shared_tensor_with_avg(
         self, shared_tensor, current_idx, procs_per_machine, T
     ):
         device = torch.device("cpu")
@@ -284,25 +284,17 @@ class PlainAverageSharing(Sharing):
     ):
         device = torch.device("cpu")
         latest_model1_index = (current_idx - 2 + 2 * T) % (2 * T)  # 第0个节点
-        # 找到所有节点的初始模型
+        # 找到所有其他节点的初始模型以及训练后的模型
         other_model1s = []
+        other_model2s = []
         for i in range(procs_per_machine):
             if i == self.rank:
                 my_model1 = shared_tensor[latest_model1_index].clone().to(device)
+                my_model2 = shared_tensor[latest_model1_index + 1].clone().to(device)
             else:
                 other_model1s.append(
                     shared_tensor[latest_model1_index].clone().to(device)
                 )
-            latest_model1_index = (latest_model1_index + 2 * T) % (
-                2 * T * procs_per_machine
-            )
-
-        # 找到所有其他节点的中间模型
-        other_model2s = []
-        for i in range(procs_per_machine):
-            if i == self.rank:
-                my_model2 = shared_tensor[latest_model1_index + 1].clone().to(device)
-            else:
                 other_model2s.append(
                     shared_tensor[latest_model1_index + 1].clone().to(device)
                 )
@@ -310,6 +302,7 @@ class PlainAverageSharing(Sharing):
                 2 * T * procs_per_machine
             )
 
+        logging.info(f"other_model1s: {len(other_model1s)}, other_model2s: {len(other_model2s)}, my_model1: {torch.norm(my_model1)}, my_model2: {torch.norm(my_model2)}")
         # 利用Flame计算更新量
         updated = self.flame(
             other_model2s, other_model1s, procs_per_machine, my_model1, my_model2
@@ -369,7 +362,7 @@ class PlainAverageSharing(Sharing):
         epsilon = 10000
         lambda_ = 1 / epsilon * (math.sqrt(2 * math.log((1.25 / delta))))
         sigma = lambda_ * S_t.numpy()
-        print(
+        logging.info(
             f"sigma: {sigma}; #clean models / clean models: {k} / {predict_good}, median norm: {S_t},"
         )
         trained_params.add_(torch.normal(0, sigma, size=trained_params.size()))
@@ -383,29 +376,22 @@ class PlainAverageSharing(Sharing):
         latest_model1_index = (current_idx - 2 + 2 * T) % (2 * T)  # 第0个节点
         # 找到所有节点的初始模型
         other_model1s = []
+        other_model2s = []
         for i in range(procs_per_machine):
             if i == self.rank:
                 my_model1 = shared_tensor[latest_model1_index].clone().to(device)
+                my_model2 = shared_tensor[latest_model1_index + 1].clone().to(device)
             else:
                 other_model1s.append(
                     shared_tensor[latest_model1_index].clone().to(device)
                 )
-            latest_model1_index = (latest_model1_index + 2 * T) % (
-                2 * T * procs_per_machine
-            )
-
-        # 找到所有其他节点的中间模型
-        other_model2s = []
-        for i in range(procs_per_machine):
-            if i == self.rank:
-                my_model2 = shared_tensor[latest_model1_index + 1].clone().to(device)
-            else:
                 other_model2s.append(
                     shared_tensor[latest_model1_index + 1].clone().to(device)
                 )
             latest_model1_index = (latest_model1_index + 2 * T) % (
                 2 * T * procs_per_machine
             )
+        logging.info(f"other_model1s: {len(other_model1s)}, other_model2s: {len(other_model2s)}, my_model1: {torch.norm(my_model1)}, my_model2: {torch.norm(my_model2)}")
 
         model_updates = [m2 - m1 for m1, m2 in zip(other_model1s, other_model2s)]
 
@@ -422,8 +408,9 @@ class PlainAverageSharing(Sharing):
         self.model.load_state_dict(new_state_dict)
 
     def foolsgold(self, model_updates, my_model1):
+        model_updates = torch.stack(model_updates)
         K = len(model_updates)  # 用户数
-        cs = smp.cosine_similarity(model_updates.cp.numpy()) - np.eye(K)
+        cs = smp.cosine_similarity(model_updates.numpy()) - np.eye(K)
         maxcs = np.max(cs, axis=1)
         # === pardoning ===
         for i in range(K):
@@ -447,7 +434,9 @@ class PlainAverageSharing(Sharing):
         wv[(np.isinf(wv) + wv > 1)] = 1
         wv[(wv < 0)] = 0
         # === calculate global update ===
-        logging.info(f"wv.shape: {wv.shape}, wv: {wv}")
+        logging.info(f"wv.shape: {wv.shape}")
+        logging.info("wv: " + ", ".join(map(str, wv)))
+
         tmp = None
         for i, j in enumerate(range(len(wv))):
             if i == 0:

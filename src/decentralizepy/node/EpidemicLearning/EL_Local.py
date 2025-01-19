@@ -129,14 +129,14 @@ class EL_Local(Node):
 
             # insert_model_history(self.model_history,self.rank,self.iteration,0,to_send0)
 
-            if not os.path.exists(f"model_{self.uid}"):
-                os.mkdir(f"model_{self.uid}")
+            if not os.path.exists(f"model_{self.uid}_{self.defense_method}_{self.attack_method}"):
+                os.mkdir(f"model_{self.uid}_{self.defense_method}_{self.attack_method}")
 
             for i in range(len(ran)):
                 if iteration >= ran[i][0] and iteration < ran[i][1]:
                     torch.save(
                         self.model.state_dict(),
-                        f"model_{self.uid}/params_{iteration}_0.pt",
+                        f"model_{self.uid}_{self.defense_method}_{self.attack_method}/params_{iteration}_0.pt",
                     )
                     gc.collect()
                     break
@@ -149,7 +149,7 @@ class EL_Local(Node):
                 if iteration >= ran[i][0] and iteration < ran[i][1]:
                     torch.save(
                         self.model.state_dict(),
-                        f"model_{self.uid}/params_{iteration}_1.pt",
+                        f"model_{self.uid}_{self.defense_method}_{self.attack_method}/params_{iteration}_1.pt",
                     )
                     gc.collect()
                     break
@@ -171,7 +171,8 @@ class EL_Local(Node):
             # assert len(self.shared_tensor[2*self.rank]) >= total_params
 
             self.history_queue.add_to_queue(model1, model2)
-
+            logging.info(f"my_model1: {torch.norm(model1)}, my_model2: {torch.norm(model2)}")
+            
             logging.info("rank:{}".format(self.rank))
 
             logging.info("Sending has been completed!")
@@ -221,15 +222,16 @@ class EL_Local(Node):
                     )
                 logging.info(f"center distance: {center_dists}")
 
+
             # 这里增加安全聚合机制
-            elif self.defense_method.lower() == "flame":
+            if self.defense_method.lower() == "flame" and not self.is_malicous:
                 self.sharing._averaging_by_shared_tensor_with_flame(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
                     len(self.shared_tensor_model_history) // (2 * self.T),
                     self.T,
                 )
-            elif self.defense_method.lower() == "foolsgold":
+            elif self.defense_method.lower() == "foolsgold" and not self.is_malicous:
                 self.sharing._averaging_by_shared_tensor_with_foolsgold(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
@@ -237,7 +239,7 @@ class EL_Local(Node):
                     self.T,
                 )
             else:
-                self.sharing._averaging_by_shared_tensor(
+                self.sharing._averaging_by_shared_tensor_with_avg(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
                     len(self.shared_tensor_model_history) // (2 * self.T),
@@ -317,7 +319,7 @@ class EL_Local(Node):
         # self.disconnect_neighbors()
         logging.info("Storing final weight")
         torch.save(
-            self.model.state_dict(), f"model_{self.uid}/params_{iteration}_final.pt"
+            self.model.state_dict(), f"model_{self.uid}_{self.defense_method}_{self.attack_method}/params_{iteration}_final.pt"
         )
         logging.info("All neighbors disconnected. Process complete!")
 
@@ -407,7 +409,6 @@ class EL_Local(Node):
         test_after=5,
         train_evaluate_after=1,
         reset_optimizer=1,
-        *args,
     ):
         """
         Construct objects.
@@ -492,6 +493,7 @@ class EL_Local(Node):
         shared_tensor_center,
         shared_tensor_radius,
         center_radius_barrier,
+        defense_method,
         T,
         rank: int,
         machine_id: int,
@@ -509,8 +511,6 @@ class EL_Local(Node):
         attack_method="",
         gradmask_ratio=1.0,
         attack_start=0,
-        defense_method="AVG",
-        *args,
     ):
         """
         Constructor
@@ -608,7 +608,6 @@ class EL_Local(Node):
             test_after,
             train_evaluate_after,
             reset_optimizer,
-            *args,
         )
 
         nodeConfigs = config["NODE"]
@@ -619,6 +618,8 @@ class EL_Local(Node):
         logging.info(
             f"rank: {self.rank}, T: {self.T}, malicious: {self.is_malicous}, defense_method: {self.defense_method}, attack_method: {self.attack_method}, gradmask_ratio: {self.gradmask_ratio}, attack_start: {self.attack_start}"
         )
+
+        logging.info(f"gradmask_ratio: {self.gradmask_ratio}, attack_start: {self.attack_start}")
 
         self.run()
 

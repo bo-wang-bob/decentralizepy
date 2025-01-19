@@ -61,7 +61,7 @@ if __name__ == "__main__":
     defense_method = args.defense_method
 
     print(
-        f"malicous_nodes: {malicous_nodes}, attack-method: {attack_method}, gradmask_ratio: {gradmask_ratio}"
+        f"malicous_nodes: {malicous_nodes}, attack-method: {attack_method}, gradmask_ratio: {gradmask_ratio}, defense_method: {defense_method}"
     )
 
     # 创建共享的tensor变量 用来存储历史模型 包括每轮聚合前和聚合后的
@@ -96,6 +96,7 @@ if __name__ == "__main__":
                         shared_tensor_center,
                         shared_tensor_radius,
                         center_radius_barrier,
+                        "AVG",
                         T,
                         r,
                         m_id,
@@ -113,7 +114,6 @@ if __name__ == "__main__":
                         attack_method,
                         gradmask_ratio,
                         attack_start,
-                        defense_method,
                     ],
                 )
             )
@@ -127,6 +127,7 @@ if __name__ == "__main__":
                         shared_tensor_center,
                         shared_tensor_radius,
                         center_radius_barrier,
+                        defense_method,
                         T,
                         r,
                         m_id,
@@ -143,7 +144,6 @@ if __name__ == "__main__":
                         False,
                         attack_method,
                         gradmask_ratio,
-                        defense_method,
                     ],
                 )
             )
