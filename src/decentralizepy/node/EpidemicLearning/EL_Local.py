@@ -171,16 +171,22 @@ class EL_Local(Node):
 
             logging.info("Receiving has been completed!")
 
-            if self.iteration > self.T:
+            if (self.iteration + 1) >= self.T:
                 logging.info("Start calculating the center of the hypersphere!")
-                # 计算自己的球心以及球半径
-                model1s = self.history_queue.get_all_model1s() # 首个为最新的模型
-                model2s = self.history_queue.get_all_model2s() 
-                grads = [model2 - model1 for model1, model2 in zip(model1s, model2s)]
-                center, radius = utils.superball_calculate(model1s, grads, self.T)
-                self.shared_tensor_center[self.rank].copy_(center)
-                self.shared_tensor_radius[self.rank].copy_(radius)
-                logging.info("Calculating has been completed, radius: {radius}, waiting others")
+                radius = self.shared_tensor_radius[self.rank]
+                dist, _ = utils.distance_calculate(model2 - model1, model1, self.shared_tensor_center[self.rank].clone())
+                logging.info(f"current distance: {dist}, radius: {radius}")
+                if (self.iteration - self.last_calculate_iteration) >= self.T or dist > radius:
+                    # 计算自己的球心以及球半径
+                    model1s = self.history_queue.get_all_model1s() # 首个为最新的模型
+                    model2s = self.history_queue.get_all_model2s() 
+                    grads = [m2 - m1 for m1, m2 in zip(model1s, model2s)]
+                    center, radius = utils.superball_calculate(model1s, grads, self.T)
+                    self.shared_tensor_center[self.rank].copy_(center)
+                    self.shared_tensor_radius[self.rank].copy_(radius)
+
+
+                logging.info(f"Calculating has been completed, radius: {radius}, waiting others")
                 self.center_radius_barrier.wait()
                 logging.info("All calculating has been completed")
 
@@ -528,7 +534,7 @@ class EL_Local(Node):
         self.T = T # 保存的历史轮数
     
         self.history_queue = utils.my_queue(self.shared_tensor_model_history, (rank * 2 * self.T, (rank + 1) * 2 * T))
-
+        self.last_calculate_iteration = 0
 
         # logging.info("Malicious: {}".format(self.is_malicous))
         total_threads = os.cpu_count()
@@ -566,7 +572,7 @@ class EL_Local(Node):
         snapshot = tracemalloc.take_snapshot()
         top_stats = snapshot.statistics('lineno')
 
-        print("[ Top 10 ]")
+        logging.info("[ Top 10 ]")
         for stat in top_stats[:10]:
-            print(stat)
+            logging.info(stat)
         

@@ -230,9 +230,9 @@ def superball_calculate(model_history, grad_history, T):
     
     """
     T = 5
-    tao = 100 #10000
-    TAO_0 = 1e-6
-    ALPHA = 0.98
+    tao = 100 #10000      100 * (0.9 ** 50) = 0.5153775207320119   尝试下50轮是否能出结果
+    TAO_0 = 1
+    ALPHA = 0.85
     ZETA = 0.8
     model_history_tensor = torch.stack(model_history)
     center = torch.mean(model_history_tensor, dim=0)
@@ -248,8 +248,8 @@ def superball_calculate(model_history, grad_history, T):
     radius = dis_list[int(T*ZETA)][0]
 
     cnt = 0
-    while tao > TAO_0:
-        # logging.info(f"cnt: {cnt}, dis_list: {dis_list}")
+    while tao > TAO_0:  # 缺少内循环
+        logging.info(f"cnt: {cnt}, dis_list: {dis_list}")
         mpt=dis_list[-1][1]
         acenter = center + tao*((mpt-center)/torch.norm(mpt-center))
         dis_list = list()
