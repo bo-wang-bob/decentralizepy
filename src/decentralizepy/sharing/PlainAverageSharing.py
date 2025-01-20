@@ -86,167 +86,6 @@ class PlainAverageSharing(Sharing):
         """
         pass
 
-    def rep_evaluation(self, x, Sim_x, radius, radiusx, max_radius, min_radius):
-        B = 0.5
-        C = 0.5
-
-        # logging.info("{},{},{},{},{},{}".format(type(Sim_x),Sim_x,radius,radiusx,max_radius,min_radius))
-        pi = (Sim_x + 1) / 2
-        ni = (1 - Sim_x) / 2
-        ux = 1 / (
-            1
-            + torch.exp(
-                -(radius + radiusx - 2 * min_radius) / (max_radius - min_radius + 1e-8)
-            ).item()
-        )
-        bx = (1 - ux) * (B * pi / (B * pi + C * ni))
-        dx = (1 - ux) * (C * ni / (B * pi + C * ni))
-        logging.info("x:{},ux:{},bx:{},dx:{}".format(x, ux, bx, dx))
-        return bx, dx, ux
-
-    def _averaging(
-        self, peer_deques, global_lr, model_history, iteration, iterations, my_neighbors
-    ):
-        """
-        Averages the received model with the local model
-
-        """
-        A = 0.5
-        centers, radiuss = dict(), dict()
-        if False:
-            with torch.no_grad():
-                for x in model_history:
-                    # logging.info("iteration:{},x:{},model_history:{}".format(iteration,x,model_history))
-                    n_model = copy.deepcopy(self.model)
-                    n_model.load_state_dict(
-                        self.deserialized_model(model_history[x][0][iteration])
-                    )
-                    model_history[x][0][iteration] = parameters_to_vector(
-                        n_model.parameters()
-                    ).to("cuda")
-                    if iteration - 9 >= 0 and (iteration - 9) in model_history[x][0]:
-                        del model_history[x][0][iteration - 9]
-                    n_model.load_state_dict(
-                        self.deserialized_model(model_history[x][1][iteration])
-                    )
-                    model_history[x][1][iteration] = parameters_to_vector(
-                        n_model.parameters()
-                    ).to("cuda")
-                    if iteration - 9 >= 0 and (iteration - 9) in model_history[x][1]:
-                        del model_history[x][1][iteration - 9]
-                    # logging.info("model_history[{}]:{}".format(x,model_history[x]))
-                if iteration >= 0.96 * iterations:
-                    center, radius = self.superball_calculate(
-                        model_history[self.rank], iteration
-                    )
-                    logging.info(
-                        "me:{},center:{},radius:{}".format(self.rank, center, radius)
-                    )
-                    centers[self.rank] = center
-                    radiuss[self.rank] = radius
-                    for x in my_neighbors:
-                        centerx, radiusx = self.superball_calculate(
-                            model_history[x], iteration
-                        )
-                        logging.info(
-                            "x:{},center:{},radius:{}".format(x, centerx, radiusx)
-                        )
-                        centers[x] = centerx
-                        radiuss[x] = radiusx
-
-                    O_iks = dict()
-                    for x in my_neighbors:
-                        if not (
-                            type(centers[x]) is int
-                            and centers[x] == -1
-                            and radiuss[x] == -1
-                        ):
-                            O_ik = centers[x] - centers[self.rank]
-                            O_iks[x] = O_ik.norm().item()
-
-                    logging.info("O_iks:{}".format(O_iks))
-                    if len(O_iks) > 0:
-                        O_ikmin = min(O_iks.values())
-                        for k in O_iks:
-                            O_iks[k] /= O_ikmin
-                    logging.info("O_iks:{}".format(O_iks))
-
-                reps = dict()
-                for x in my_neighbors:
-                    # if type(centers[x]) is int and centers[x] == -1 and radiuss[x] == -1:
-                    #     reps[x] = -1
-                    # else:
-                    # logging.info("centers:{},radiuss:{}".format(centers,radiuss))
-                    # Sim_x = self.calculate_similarity(centers[self.rank],centers[x],model_history[self.rank],iteration)
-                    if iteration >= 0.96 * iterations:
-                        Sim_x = 1 / O_iks[x]
-                        stacked_radius_tensors = torch.stack(list(radiuss.values()))
-                        max_radius = torch.max(stacked_radius_tensors)
-                        min_radius = torch.min(stacked_radius_tensors)
-                        logging.info(
-                            "max_radius:{},min_radius:{}".format(max_radius, min_radius)
-                        )
-                        bx, dx, ux = self.rep_evaluation(
-                            x,
-                            Sim_x,
-                            radiuss[self.rank],
-                            radiuss[x],
-                            max_radius,
-                            min_radius,
-                        )
-                        repx = bx + A * ux
-                        reps[x] = repx
-                        logging.info("Sim_{}:{}".format(x, Sim_x))
-                        logging.info("reps[{}]:{},{}".format(x, reps[x], type(reps[x])))
-                    else:
-                        reps[x] = 1
-        reps = dict()
-        for x in my_neighbors:
-            reps[x] = 1
-        ITA = 0.65
-        self.received_this_round = 0
-        with torch.no_grad():
-            Agg = dict()
-            Agg[self.rank] = 1
-            for x in reps:
-                # if reps[x] > ITA:
-                Agg[x] = reps[x]
-
-            total = dict()
-            sums = sum(Agg.values())
-            train_data = dict()
-            for i, n in enumerate(peer_deques):
-                self.received_this_round += 1
-                data = peer_deques[n].popleft()
-                iteration = data["iteration"]
-                del data["iteration"]
-                del data["CHANNEL"]
-                logging.debug(
-                    "Averaging model from neighbor {} of iteration {}".format(
-                        n, iteration
-                    )
-                )
-                if n in Agg:
-                    data = self.deserialized_model(data)
-                    for key, value in data.items():
-                        if key in total:
-                            total[key] += value * Agg[n] / sums
-                        else:
-                            total[key] = value * Agg[n] / sums
-                else:
-                    logging.info("Neighbor {} is not in Agg".format(n))
-
-            for key, value in self.model.state_dict().items():
-                if key in total.keys():
-                    total[key] += value.cpu() * Agg[self.rank] / sums
-                else:
-                    total[key] = value.cpu() * Agg[self.rank] / sums
-
-        if len(total) > 0:
-            self.model.load_state_dict(total)
-
-        self._post_step()
-        self.communication_round += 1
 
     def _averaging_by_shared_tensor_with_avg(
         self, shared_tensor, current_idx, procs_per_machine, T
@@ -278,6 +117,50 @@ class PlainAverageSharing(Sharing):
             start_index = end_index
 
         self.model.load_state_dict(new_state_dict)
+
+    def _averaging_by_shared_tensor_with_noesisfed(
+        self, shared_tensor, current_idx, procs_per_machine, T, center_dists
+    ):
+        device = torch.device("cpu")
+        latest_model1_index = (current_idx - 2 + 2 * T) % (2 * T)  # 第0个节点
+        # 找到所有的中间模型
+        model2s = []
+        for _ in range(procs_per_machine):
+            model2s.append(shared_tensor[latest_model1_index + 1].clone().to(device))
+            latest_model1_index = (latest_model1_index + 2 * T) % (
+                2 * T * procs_per_machine
+            )
+        model2s = torch.stack(model2s)
+
+        # 使用KMeans算法对球心距进行聚类
+        center_dists = [center_dist.cpu().numpy() for center_dist in center_dists]
+        center_dists = np.array(center_dists).reshape(-1, 1)
+        kmeans = KMeans(n_clusters=2, random_state=0).fit(center_dists)
+
+
+        from collections import Counter
+        labels = kmeans.labels_
+        counts = Counter(labels)
+        max_class = max(counts, key=counts.get)
+        indices = np.where(labels == max_class)[0]
+        logging.info(f"indices: {indices}")
+        updated = torch.mean(model2s[indices], dim=0)
+
+        # 对于resnet18模型来说
+        # Total parameters: 11689512 model.parameters()
+        # Total parameters: 11699132 model.state_dict().items()
+
+        total_params = sum(p.numel() for _, p in self.model.state_dict().items())
+        logging.info(f"total_params: {total_params}")
+        new_state_dict = dict()
+        start_index = 0
+        for i, key in enumerate(self.model.state_dict()):
+            end_index = start_index + self.lens[i]
+            new_state_dict[key] = updated[start_index:end_index].reshape(self.shapes[i])
+            start_index = end_index
+
+        self.model.load_state_dict(new_state_dict)
+
 
     def _averaging_by_shared_tensor_with_flame(
         self, shared_tensor, current_idx, procs_per_machine, T

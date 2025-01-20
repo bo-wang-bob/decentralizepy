@@ -213,7 +213,7 @@ class EL_Local(Node):
 
                 # 计算自己与其他人的球心距
                 center_dists = []
-                for i in sorted(self.my_neighbors):
+                for i in range(self.pros_per_machine):
                     center_dists.append(
                         torch.norm(
                             center.to(self.device)
@@ -228,23 +228,33 @@ class EL_Local(Node):
                 self.sharing._averaging_by_shared_tensor_with_flame(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
-                    len(self.shared_tensor_model_history) // (2 * self.T),
+                    self.pros_per_machine,
                     self.T,
+                )
+            elif self.defense_method.lower() == "noesisfed" and not self.is_malicous and (self.iteration + 1) >= self.T:
+                self.sharing._averaging_by_shared_tensor_with_noesisfed(
+                    self.shared_tensor_model_history,
+                    self.history_queue.current_index,
+                    self.pros_per_machine,
+                    self.T,
+                    center_dists
                 )
             elif self.defense_method.lower() == "foolsgold" and not self.is_malicous:
                 self.sharing._averaging_by_shared_tensor_with_foolsgold(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
-                    len(self.shared_tensor_model_history) // (2 * self.T),
+                    self.pros_per_machine,
                     self.T,
                 )
             else:
                 self.sharing._averaging_by_shared_tensor_with_avg(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
-                    len(self.shared_tensor_model_history) // (2 * self.T),
+                    self.pros_per_machine,
                     self.T,
                 )
+
+
 
             if self.reset_optimizer:
                 self.optimizer = self.optimizer_class(
@@ -587,8 +597,8 @@ class EL_Local(Node):
             self.shared_tensor_model_history, (rank * 2 * self.T, (rank + 1) * 2 * T)
         )
         self.last_calculate_iteration = 0
+        self.pros_per_machine = mapping.pros_per_machine
 
-        # logging.info("Malicious: {}".format(self.is_malicous))
         total_threads = os.cpu_count()
         self.threads_per_proc = max(
             math.floor(total_threads / mapping.procs_per_machine), 1

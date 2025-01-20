@@ -233,7 +233,7 @@ def superball_calculate(model_history, grad_history, T):
     T = 5
     tao = 100  # 10000      100 * (0.9 ** 50) = 0.5153775207320119   尝试下50轮是否能出结果
     TAO_0 = 1
-    ALPHA = 0.85
+    ALPHA = 0.9
     ZETA = 0.8
     model_history_tensor = torch.stack(model_history)
     center = torch.mean(model_history_tensor, dim=0)
