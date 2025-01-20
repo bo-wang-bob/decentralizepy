@@ -123,14 +123,19 @@ class PlainAverageSharing(Sharing):
     ):
         device = torch.device("cpu")
         latest_model1_index = (current_idx - 2 + 2 * T) % (2 * T)  # 第0个节点
-        # 找到所有的中间模型
-        model2s = []
-        for _ in range(procs_per_machine):
-            model2s.append(shared_tensor[latest_model1_index + 1].clone().to(device))
+        # 找到所有其他节点的初始模型以及训练后的模型
+        other_model2s = []
+        for i in range(procs_per_machine):
+            if i == self.rank:
+                my_model2 = shared_tensor[latest_model1_index + 1].clone().to(device)
+            else:
+                other_model2s.append(
+                    shared_tensor[latest_model1_index + 1].clone().to(device)
+                )
             latest_model1_index = (latest_model1_index + 2 * T) % (
                 2 * T * procs_per_machine
             )
-        model2s = torch.stack(model2s)
+        other_model2s = torch.stack(other_model2s)
 
         # 使用KMeans算法对球心距进行聚类
         center_dists = [center_dist.cpu().numpy() for center_dist in center_dists]
@@ -144,7 +149,8 @@ class PlainAverageSharing(Sharing):
         max_class = max(counts, key=counts.get)
         indices = np.where(labels == max_class)[0]
         logging.info(f"indices: {indices}")
-        updated = torch.mean(model2s[indices], dim=0)
+        updated = (torch.mean(other_model2s[indices], dim=0) + my_model2) / 2
+
 
         # 对于resnet18模型来说
         # Total parameters: 11689512 model.parameters()

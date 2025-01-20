@@ -213,44 +213,48 @@ class EL_Local(Node):
 
                 # 计算自己与其他人的球心距
                 center_dists = []
-                for i in range(self.pros_per_machine):
-                    center_dists.append(
-                        torch.norm(
-                            center.to(self.device)
-                            - self.shared_tensor_center[i].clone().to(self.device)
+                for i in range(self.procs_per_machine):
+                    if i != self.rank:
+                        center_dists.append(
+                            torch.norm(
+                                center.to(self.device)
+                                - self.shared_tensor_center[i].clone().to(self.device)
+                            )
                         )
-                    )
+                    else:
+                        center_dists.append(0)
                 logging.info(f"center distance: {center_dists}")
 
+                center_dist_with_others = [center_dist for i, center_dist in enumerate(center_dists) if i != self.rank]
 
             # 这里增加安全聚合机制
             if self.defense_method.lower() == "flame" and not self.is_malicous:
                 self.sharing._averaging_by_shared_tensor_with_flame(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
-                    self.pros_per_machine,
+                    self.procs_per_machine,
                     self.T,
                 )
             elif self.defense_method.lower() == "noesisfed" and not self.is_malicous and (self.iteration + 1) >= self.T:
                 self.sharing._averaging_by_shared_tensor_with_noesisfed(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
-                    self.pros_per_machine,
+                    self.procs_per_machine,
                     self.T,
-                    center_dists
+                    center_dist_with_others
                 )
             elif self.defense_method.lower() == "foolsgold" and not self.is_malicous:
                 self.sharing._averaging_by_shared_tensor_with_foolsgold(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
-                    self.pros_per_machine,
+                    self.procs_per_machine,
                     self.T,
                 )
             else:
                 self.sharing._averaging_by_shared_tensor_with_avg(
                     self.shared_tensor_model_history,
                     self.history_queue.current_index,
-                    self.pros_per_machine,
+                    self.procs_per_machine,
                     self.T,
                 )
 
@@ -597,7 +601,7 @@ class EL_Local(Node):
             self.shared_tensor_model_history, (rank * 2 * self.T, (rank + 1) * 2 * T)
         )
         self.last_calculate_iteration = 0
-        self.pros_per_machine = mapping.pros_per_machine
+        self.procs_per_machine = mapping.procs_per_machine
 
         total_threads = os.cpu_count()
         self.threads_per_proc = max(

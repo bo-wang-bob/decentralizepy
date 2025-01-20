@@ -96,7 +96,7 @@ if __name__ == "__main__":
                         shared_tensor_center,
                         shared_tensor_radius,
                         center_radius_barrier,
-                        "AVG",
+                        defense_method,
                         T,
                         r,
                         m_id,
